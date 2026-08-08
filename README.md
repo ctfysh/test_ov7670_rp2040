@@ -147,6 +147,7 @@ python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
 ```
 ├── platformio.ini      # 构建配置（build_flags：USB/分辨率/XCLK）
 ├── pinout.csv          # 接线表
+├── .gitignore          # 忽略构建输出（.pio/）、生成帧（frames/）等
 ├── ov7670_rp2040_bb.jpg   # 理论接线图（Fritzing 面包板图）
 ├── ov7670_rp2040.fzz     # Fritzing 原始工程文件（可编辑）
 ├── wiring_diagram_photo.jpg  # 实际接线照片
@@ -154,12 +155,15 @@ python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
 ├── capture.py          # 单帧捕获 → BMP
 ├── live_view.py        # 实时查看器（numpy + pygame）
 ├── verify_frame.py     # 帧数据校验工具
-├── frames/             # 捕获的 BMP 样本
 ├── docs/
 │   └── OV7670_RP2040_REFERENCE.md
+├── include/            # 头文件目录（PlatformIO 模板）
+├── lib/                # 私有库目录（PlatformIO 模板）
+├── test/               # 测试目录（PlatformIO 模板）
 └── src/
     ├── main.cpp        # 主逻辑：PIO 采集 + DMA + USB 流 + 诊断
     ├── camera.pio      # PIO 程序（XCLK + 捕获）
+    ├── camera.pio.h    # pioasm 生成的头文件
     ├── ov7670.c/.h     # OV7670 驱动（SCCB over 硬件 I2C0）
 ```
 
