@@ -9,13 +9,15 @@ Keys:
   S        save current frame as BMP (live_NNN.bmp)
   Q / Esc  quit
 
-Usage:  python3 live_view.py [port] [scale]
-  port   serial port (default: first /dev/cu.usbmodem*)
-  scale  display scale factor (default: 2)
+Usage:  python3 live_view.py [port] [scale] [rotate]
+  port    serial port (default: first /dev/cu.usbmodem*)
+  scale   display scale factor (default: 2)
+  rotate  counter-clockwise rotation in degrees: 0/90/180/270 (default: 90)
 
 The viewer adapts to whatever WxH the firmware sends (QVGA 320x240 default;
 if you rebuild with FRAME_W=160 FRAME_H=120 it just works).  Decoding is
-vectorized with numpy for real-time throughput.
+vectorized with numpy for real-time throughput.  Rotation is applied on the
+numpy image before display, so S-key snapshots are what you see (WYSIWYG).
 """
 import glob
 import struct
@@ -25,7 +27,7 @@ import time
 import numpy as np
 import pygame
 
-import capture  # reuse rgb565_to_bmp for S-key snapshots
+import capture  # reuse rgb565_to_bmp fallback (unrotated) for S-key snapshots
 
 
 def find_port():
@@ -46,6 +48,8 @@ def decode_rgb565(raw, w, h):
 def main():
     port = sys.argv[1] if len(sys.argv) > 1 else find_port()
     scale = int(sys.argv[2]) if len(sys.argv) > 2 else 2
+    rot = int(sys.argv[3]) if len(sys.argv) > 3 else 90
+    rot_k = (rot // 90) % 4  # np.rot90 k: 1 = CCW 90deg (rotate left)
     if not port:
         print("No /dev/cu.usbmodem* device found; pass a port explicitly.")
         sys.exit(1)
@@ -61,7 +65,9 @@ def main():
     clock = pygame.time.Clock()
 
     W = H = 0
+    disp_w = disp_h = 0
     buf = bytearray()
+    cur_surf = None
     saved = 0
     frames = 0
     fps = 0.0
@@ -75,10 +81,10 @@ def main():
             elif ev.type == pygame.KEYDOWN:
                 if ev.key in (pygame.K_q, pygame.K_ESCAPE):
                     running = False
-                elif ev.key == pygame.K_s and W and H:
-                    with open(f"live_{saved:03d}.bmp", "wb") as f:
-                        f.write(capture.rgb565_to_bmp(W, H, bytes(buf)))
-                    print(f"  saved live_{saved:03d}.bmp")
+                elif ev.key == pygame.K_s and cur_surf is not None:
+                    fname = f"live_{saved:03d}.bmp"
+                    pygame.image.save(cur_surf, fname)
+                    print(f"  saved {fname}")
                     saved += 1
 
         # --- sync to "CAM1" magic ---
@@ -106,11 +112,12 @@ def main():
         if (w, h) != (W, H):
             W, H = w, h
             buf = bytearray(size)
+            disp_w, disp_h = (H, W) if rot_k % 2 else (W, H)
             if screen is None:
-                screen = pygame.display.set_mode((W * scale, H * scale))
+                screen = pygame.display.set_mode((disp_w * scale, disp_h * scale))
                 pygame.display.set_caption(
-                    f"OV7670 Live {W}x{H}  S=save Q=quit")
-            print(f"resolution {W}x{H}, size {size} B/frame")
+                    f"OV7670 Live {W}x{H} (rot {rot}deg)  S=save Q=quit")
+            print(f"resolution {W}x{H} -> display {disp_w}x{disp_h}")
 
         got = 0
         while got < size:
@@ -122,10 +129,14 @@ def main():
         if got < size:
             continue  # truncated frame, re-sync
 
-        # --- decode + display ---
+        # --- decode + rotate + display ---
         img = decode_rgb565(bytes(buf), W, H)
+        if rot_k:
+            img = np.rot90(img, k=rot_k)  # k=1: rotate left 90deg (CCW)
         surf = pygame.surfarray.make_surface(np.transpose(img, (1, 0, 2)))
-        screen.blit(pygame.transform.scale(surf, (W * scale, H * scale)), (0, 0))
+        cur_surf = surf
+        screen.blit(pygame.transform.scale(surf, (disp_w * scale, disp_h * scale)),
+                    (0, 0))
         frames += 1
         now = time.time()
         if now - t0 >= 1.0:
