@@ -42,6 +42,10 @@
 #define FRAME_BYTES (FRAME_W * FRAME_H * 2) // 320*240*2 = 153600
 
 // ---- Frame protocol over USB (CAM1: magic + W + H + raw RGB565) ----
+// Pixels are BIG-ENDIAN per pair (OV7670 emits the high byte first; the PIO
+// preserves byte order into the DMA buffer). Host tools must parse
+// (b[i] << 8) | b[i+1], NOT the little-endian (b[i] | b[i+1] << 8) which
+// swaps R and B and scrambles G.
 #define FRAME_MAGIC0 'C'
 #define FRAME_MAGIC1 'A'
 #define FRAME_MAGIC2 'M'
@@ -208,6 +212,48 @@ static uint8_t read_reg_checked(uint8_t reg) {
   return ov7670_read_reg(reg, &v) == 0 ? v : 0xFF;
 }
 
+// ---- Register readback (diagnostic) ----
+// Host sends 'R' over USB; MCU replies with
+//   DBG1 + 0xFB + count + count * (reg, val)
+// Picks the registers that settle the format and AGC/AEC questions from the
+// current init table. A value of 0xFF means that SCCB read failed (dropped
+// init write or dead bus). GAIN (0x00) and AECH (0x10) are live auto-exposure
+// state: they are read-only on the OV7670 and show whether AGC/AEC is
+// pumping the image while the scene is constant.
+#define REG_MARKER 0xFB
+
+static void reg_readback_send(void) {
+  static const uint8_t regs[] = {
+      0x0A, // PID         expect 0x76 (OV7670)
+      0x0B, // VER         expect 0x73
+      0x12, // COM7        expect 0x14 (QVGA + RGB)
+      0x40, // COM15       expect 0xD0 (RGB565 full range)
+      0x15, // COM10       expect 0x02
+      0x11, // CLKRC       expect 0x80 (PWM XCLK) / 0x01 (PIO 8 MHz)
+      0x6B, // DBLV        expect 0x0A (PLL x2)
+      0x1E, // MVFP        expect 0x07 (no flip)
+      0x13, // COM8        expect 0xE7 (AGC+AEC+AWB on)
+      0x14, // COM9        not written by init; live readback 0x4A (reset default)
+      0x00, // GAIN        AGC current gain (live)
+      0x10, // AECH        exposure high byte (live)
+      0x24, // AEW         AGC lower limit
+      0x25, // AEB         AGC upper limit
+      0x32, // HREF        HREF start/end
+      0x70, // SCALING_XSC
+      0x71, // SCALING_YSC
+  };
+  Serial.write(DBG_MAGIC0);
+  Serial.write(DBG_MAGIC1);
+  Serial.write(DBG_MAGIC2);
+  Serial.write(DBG_MAGIC3);
+  Serial.write(REG_MARKER);
+  Serial.write((uint8_t)sizeof(regs));
+  for (uint8_t i = 0; i < sizeof(regs); i++) {
+    Serial.write(regs[i]);
+    Serial.write(read_reg_checked(regs[i]));
+  }
+}
+
 // ---- Waveform snapshot (diagnostic) ----
 // Host sends 'W' (fast) or 'S' (slow) over USB; MCU replies with
 //   DBG1 + 0xFC + type(0x01|0x02) + count(2 BE) + dur_us(4 BE) + samples
@@ -337,6 +383,11 @@ void loop() {
       wave_capture_fast();
     } else if (c == 'S') {
       wave_capture_slow();
+    } else if (c == 'R') {
+      // Register readback: proves the init writes landed and shows live
+      // AGC/AEC state (see reg_readback_send). Reply is DBG1 + 0xFB, so the
+      // host frame-sync loop passes it through like every other diagnostic.
+      reg_readback_send();
     } else if (c == 'B') {
       // Software reboot into BOOTSEL: host sends 'B' and the Pico re-enumerates
       // as the RPI-RP2 mass-storage drive for drag-and-drop flashing (no

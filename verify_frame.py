@@ -11,9 +11,15 @@ NFRAMES = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 os.makedirs(OUTDIR, exist_ok=True)
 
 def rgb565_to_bmp(w, h, raw):
+    """Convert RGB565 raw bytes -> 24-bit BMP bytes.
+
+    NOTE: the RP2040 stream is BIG-ENDIAN per pixel (the OV7670 outputs the
+    high byte first and the PIO preserves that order), so byte i is the HIGH
+    byte. Parsing it little-endian swaps R and B and scrambles the G bits.
+    """
     px = bytearray(w * h * 3)
     for i in range(w * h):
-        v = raw[i * 2] | (raw[i * 2 + 1] << 8)
+        v = (raw[i * 2] << 8) | raw[i * 2 + 1]
         r = ((v >> 11) & 0x1F); r = (r << 3) | (r >> 2)
         g = ((v >> 5)  & 0x3F); g = (g << 2) | (g >> 4)
         b = (v & 0x1F);         b = (b << 3) | (b >> 2)
@@ -66,7 +72,7 @@ while saved < NFRAMES:
     nz = sum(1 for x in raw if x != 0)
     distinct = len(set(raw))
     lo = min(raw); hi = max(raw)
-    # per-byte-position stats: 0=low byte of RGB565, 1=high byte
+    # per-byte-position stats: 0=HIGH byte of RGB565 (stream is big-endian), 1=low byte
     nz_lo = sum(1 for i in range(0, len(raw), 2) if raw[i] != 0)
     nz_hi = sum(1 for i in range(1, len(raw), 2) if raw[i] != 0)
     print(f"  frame {saved}: {w}x{h}, {len(raw)} B, non-zero {nz}/{len(raw)} "
