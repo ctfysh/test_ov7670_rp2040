@@ -1,0 +1,24 @@
+; OV7670 (no-FIFO) capture for YD-RP2040
+; Pin mapping (USB-safe, IN_BASE must be a multiple of 8):
+;   D0-D7 -> GP8-GP15 (in_base = 8)
+;   VSYNC -> GP16     (GPIO poll, frame start - not in PIO program)
+;   HREF  -> GP17     (PIO input, absolute pin 17)
+;   PCLK  -> GP18     (PIO input, absolute pin 18)
+;   XCLK  -> GP22     (PWM ~24 MHz, see main.cpp startXclk)
+;   SIOC/SIOD -> GP21/GP20 (hardware I2C0 10kHz)
+
+; ---------------------------------------------------------------------------
+; pixel capture (SM1)
+; Waits for HREF high, then samples 8 data pins on rising PCLK edge.
+; One byte per pixel (RGB565 LSB first from camera; paired bytes form a pixel).
+; WAIT GPIO uses ABSOLUTE GPIO numbers (17/18); 'wait pin' would offset from
+; the IN base (8), hitting the wrong pins (D0/D1). This is the critical fix
+; vs the earlier hand-encoded program.
+; ---------------------------------------------------------------------------
+.program image
+.wrap_target
+    wait 1 gpio 17     ; HREF high -> line start
+    wait 1 gpio 18     ; PCLK rising edge
+    in pins, 8         ; sample D0-D7 (in_base = GP8..GP15)
+    wait 0 gpio 18     ; PCLK falling edge
+.wrap

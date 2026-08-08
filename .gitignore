@@ -1,0 +1,19 @@
+# PlatformIO build output
+.pio/
+
+# PlatformIO MCP workspace (build/monitor logs, task state)
+.pio-mcp-workspace/
+
+# OpenCode/agent tooling state
+.omo/
+
+# Generated debug artifacts (camera frames, scripts output)
+frames/
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
