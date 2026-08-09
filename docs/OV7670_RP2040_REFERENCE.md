@@ -1,8 +1,10 @@
 # OV7670 + RP2040 PIO — Research Reference
 
-Extracted from 3 open-source repos (clones in `/tmp/ov_ref/`). Target: RGB565 QVGA (320x240), direct-parallel wiring (D0..D7 + HREF + VSYNC + PCLK), matching this project's pinout.
+Extracted from 3 open-source repos (clones in `/tmp/ov_ref/`). Original target: RGB565 QVGA (320x240), direct-parallel wiring (D0..D7 + HREF + VSYNC + PCLK), matching this project's pinout.
 
 **Key finding: none of the reference repos defaults to RGB565 — all default to YUV.** For RGB565 you must use the `OV7670_rgb` format table + `OV7670_SIZE_DIV2`.
+
+> **Status (feat/ov7670-uvc): the project now *adopts* the YUV default** — OV7670 is configured for YUV422 YUYV (COM7=0x10, COM15=0xC0, COM13=0x80), which maps 1:1 onto the UVC YUY2 payload with zero pixel conversion on the MCU. The RGB565 tables below are kept as reference only.
 
 ---
 
@@ -195,23 +197,24 @@ Setup: `in_shift = left, autopush, 8 bits` → each byte auto-pushed to RX FIFO;
 
 ## 5. Comparison with this project's `src/main.cpp`
 
-Current main.cpp uses a **6-instruction free-running PIO** (hand-encoded `0x2080..0x0000`, autopush @32-bit, DMA 32-bit `IMG_SIZE/4` words) with a **custom short register table** (24 regs). Gaps vs reference:
+**Current `feat/ov7670-uvc` main.cpp is a UVC webcam implementation** (TinyUSB video class), not the earlier CDC "CAM1" streaming version. The OV7670 is configured for **YUV422 YUYV output** (`0x12=0x10`, `0x40=0xC0`, `0x3D=0x80` COM13 YUYV), which maps 1:1 onto the UVC YUY2 payload — no pixel conversion on the MCU (see the status note at the top of this doc: the reference repos' YUV default is now *adopted*, not avoided).
 
-| Aspect | main.cpp (current) | Reference (tvlad1234) |
+| Aspect | main.cpp (current, feat/ov7670-uvc) | Reference (tvlad1234) |
 |---|---|---|
-| PIO | 6 instr, HREF+PCLK only, no VSYNC, no line/byte counting — frame boundary is DMA count only | 22 instr, VSYNC+HREF+PCLK gated, line/byte counted, `irq wait 0` frame-done handshake |
-| Init table | short custom subset, several values deviate from Adafruit (e.g. COM10=0x6B/0x0A, COM12=0x3D/0xC1, window 0x17=0x13...) | full Adafruit `OV7670_init` (~100 regs) + `OV7670_rgb` |
-| Format | COM15=0x10 only (RGB565 but R00FF bit missing → 0-247 range) | COM15=0xD0 (RGB565|R00FF → full 0-255) |
-| DMA | 32-bit words from RX FIFO (autopush 32) | 8-bit bytes from RX FIFO (autopush 8) |
+| PIO | 4-instr `camera.pio`: `wait 1 gpio 17` (HREF) / `wait 1 gpio 18` (PCLK rise) / `in pins 8` / `wait 0 gpio 18` (PCLK fall), wrapped; VSYNC via GPIO poll → DMA re-arm; frame boundary = DMA count only | 22 instr, VSYNC+HREF+PCLK gated, line/byte counted, `irq wait 0` frame-done handshake |
+| Init table | mxyxbb-derived (CSDN, tuned for 24 MHz XCLK), QVGA window/scaling + format override rows (COM7/COM15/COM13) | full Adafruit `OV7670_init` (~100 regs) + `OV7670_rgb` |
+| Format | YUV422 YUYV (COM7=0x10, COM15=0xC0 full range, COM13=0x80 YUYV order) — zero-conversion UVC YUY2 | RGB565 (COM15=0xD0 RGB565|R00FF → full 0-255) |
+| DMA | 8-bit bytes from RX FIFO (autopush 8), count = `FRAME_BYTES` (153600), single buffer (2×153600 > 264 KB SRAM) | 8-bit bytes from RX FIFO (autopush 8) |
+| USB out | TinyUSB UVC class, `tud_video_n_frame_xfer`, YUY2 320×240, 1–10 FPS (default ~6 FPS, full-speed iso ~1 MB/s limit) | none (CDC UART) |
 
-**Bottom line**: to get RGB565 QVGA with correct frame boundaries, swap in tvlad1234's PIO program + `OV7670_rgb` + `OV7670_init` + `set_size(DIV2)` window regs; keep the existing VSYNC GPIO sync or switch to PIO `irq wait 0`.
+**Bottom line**: this project now follows **mxyxbb's UVC route** (§1 row 3) with YUV422 output, so the RGB565 swap-in suggestion below is no longer the goal. If RGB565 is ever needed again, use tvlad1234's PIO program + `OV7670_rgb` + `OV7670_init` + `set_size(DIV2)` window regs.
 
 ---
 
 ## 6. Config notes
 
-- tvlad1234 XCLK: 12.5 MHz (`OV7670_XCLK_HZ 12500000` in [arch_rp2040.h](https://github.com/tvlad1234/pico-ml-camera/blob/216951ee732bfeb6f4a53e33ecebfd7c34289158/ov7670/arch/arch_rp2040.h)) — this project uses ~24.2 MHz PWM (main.cpp `startXclk`, wrap=1, div 5.5) — both are within spec (OV7670 max 24 MHz).
-- mxyxbb XCLK: PWM wrap=4 (~20.83 MHz), SCCB i2c 10 kHz ([ov7670.c:14-55](https://github.com/mxyxbb/rp2040_ov7670_usb_camera/blob/c1020302d3dfc00a8ebefed629d97360c3f12168/src/ov7670/ov7670.c#L14-L55)) — matches this project's 10 kHz I2C.
+- tvlad1234 XCLK: 12.5 MHz (`OV7670_XCLK_HZ 12500000` in [arch_rp2040.h](https://github.com/tvlad1234/pico-ml-camera/blob/216951ee732bfeb6f4a53e33ecebfd7c34289158/ov7670/arch/arch_rp2040.h)) — both are within spec (OV7670 max 24 MHz).
+- mxyxbb XCLK: PWM wrap=4 (~20.83 MHz), SCCB i2c 10 kHz ([ov7670.c:14-55](https://github.com/mxyxbb/rp2040_ov7670_usb_camera/blob/c1020302d3dfc00a8ebefed629d97360c3f12168/src/ov7670/ov7670.c#L14-L55)) — **this project now matches**: `-DXCLK_PWM` → PWM wrap=5 = 20.83 MHz (125/6), SCCB 10 kHz I2C.
 - Board: `vccgnd_yd_rp2040` (platformio.ini) — arduino-pico core (earlephilhower), exposes pico-sdk PIO/DMA + Wire pin remap. Fine for the reference PIO/DMA code.
 
 *Clones kept at `/tmp/ov_ref/` for further diffs.*
