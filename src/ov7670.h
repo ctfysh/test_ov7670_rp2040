@@ -102,6 +102,9 @@ extern "C" {
 #define OV7670_COM15_R00FF 0xC0 // full 0-255 output range
 #define OV7670_COM15_RGB565 0x10
 
+// COM13 bits (UV ordering; YUYV matches the UVC YUY2 fourcc byte order)
+#define OV7670_COM13_YUYV 0x80 // Y0 U0 Y1 V0 output order
+
 // COM3 bits
 #define OV7670_COM3_DCWEN 0x04 // downsample enable
 #define OV7670_COM3_SCALEEN 0x08 // zoom enable
@@ -137,7 +140,7 @@ bool ov7670_i2c_scan(void);
 // bus, 0x00 = shorted/clamped. Call only after a failed detect.
 uint8_t ov7670_bus_levels(void);
 
-// Full bring-up: reset, RGB565 format, QVGA 320x240.
+// Full bring-up: reset, YUV422 YUYV format, QVGA 320x240.
 // Returns 0 on success.
 int ov7670_init(void);
 

@@ -1,4 +1,4 @@
-// OV7670 no-FIFO camera -> USB CDC video stream on YD-RP2040
+// OV7670 no-FIFO camera -> native USB UVC webcam on YD-RP2040
 //
 // Flow:
 //   XCLK on GP22: hardware PWM 20.8 MHz (add -DXCLK_PWM to build_flags; this
@@ -6,18 +6,17 @@
 //   PIO0 SM1: capture 8-bit pixel bytes on GP8..GP15 (HREF=GP17, PCLK=GP18)
 //   VSYNC (GP16) rising edge IRQ starts a DMA transfer of one full frame
 //   DMA single-buffer FRAME_BYTES; on completion the frame is flagged
-//   loop() streams the completed frame over USB CDC (Serial)
+//   loop() hands the completed frame to TinyUSB's UVC class (native webcam)
 //
-// Frame size: QVGA 320x240 RGB565 = 153600 bytes (FRAME_W/FRAME_H in
-// platformio.ini). Host protocol (matches capture.py):
-//   "CAM1" (4 B) + W (u16 BE) + H (u16 BE) + FRAME_BYTES raw RGB565.
-//   capture.py syncs by scanning for the "CAM1" magic, so every diagnostic
-//   packet below uses a distinct "DBG1" magic that the host passes through.
+// Frame size: QVGA 320x240 YUY2 = 153600 bytes (FRAME_W/FRAME_H in
+// platformio.ini). The host sees a standard "USB Camera" (UVC, no drivers);
+// USB CDC (Serial) stays for the diagnostics below ("DBG1" packets).
 
 #include <Arduino.h>
 
 #include "camera.pio.h"
 #include "ov7670.h"
+#include "Adafruit_TinyUSB.h" // UVC video class + TinyUSBDevice
 
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
@@ -41,17 +40,120 @@
 
 #define FRAME_BYTES (FRAME_W * FRAME_H * 2) // 320*240*2 = 153600
 
-// ---- Frame protocol over USB (CAM1: magic + W + H + raw RGB565) ----
-// Pixels are BIG-ENDIAN per pair (OV7670 emits the high byte first; the PIO
-// preserves byte order into the DMA buffer). Host tools must parse
-// (b[i] << 8) | b[i+1], NOT the little-endian (b[i] | b[i+1] << 8) which
-// swaps R and B and scrambles G.
-#define FRAME_MAGIC0 'C'
-#define FRAME_MAGIC1 'A'
-#define FRAME_MAGIC2 'M'
-#define FRAME_MAGIC3 '1'
-// Diagnostic packets use a different magic so capture.py's "CAM1" sync
-// loop passes them through without ever matching.
+// ---- UVC (USB Video Class): native webcam output ----
+// TinyUSB's video class exposes the Pico as a standard UVC camera (YUY2
+// 320x240). The host sees "USB Camera" with no drivers and no custom
+// protocol. CDC (Serial) stays for the diagnostics below.
+// Video path: | Camera Terminal 0x01 | -> | Output Terminal 0x02 (streaming) |
+#define TERMID_CAMERA 0x01
+#define TERMID_OUTPUT 0x02
+
+tusb_desc_video_control_camera_terminal_t const desc_camera_terminal = {
+    .bLength = sizeof(tusb_desc_video_control_camera_terminal_t),
+    .bDescriptorType = TUSB_DESC_CS_INTERFACE,
+    .bDescriptorSubType = VIDEO_CS_ITF_VC_INPUT_TERMINAL,
+    .bTerminalID = TERMID_CAMERA,
+    .wTerminalType = VIDEO_ITT_CAMERA,
+    .bAssocTerminal = 0,
+    .iTerminal = 0,
+    .wObjectiveFocalLengthMin = 0,
+    .wObjectiveFocalLengthMax = 0,
+    .wOcularFocalLength = 0,
+    .bControlSize = 3,
+    .bmControls = { 0, 0, 0 } // no camera controls exposed
+};
+
+tusb_desc_video_control_output_terminal_t const desc_output_terminal = {
+    .bLength = sizeof(tusb_desc_video_control_output_terminal_t),
+    .bDescriptorType = TUSB_DESC_CS_INTERFACE,
+    .bDescriptorSubType = VIDEO_CS_ITF_VC_OUTPUT_TERMINAL,
+    .bTerminalID = TERMID_OUTPUT,
+    .wTerminalType = VIDEO_TT_STREAMING,
+    .bAssocTerminal = 0,
+    .bSourceID = TERMID_CAMERA,
+    .iTerminal = 0
+};
+
+// YUY2 (YUV 4:2:2): matches the OV7670 YUYV output 1:1 - the captured bytes
+// are handed to USB as-is, no pixel conversion on the MCU.
+tusb_desc_video_format_uncompressed_t const desc_format = {
+    .bLength = sizeof(tusb_desc_video_format_uncompressed_t),
+    .bDescriptorType = TUSB_DESC_CS_INTERFACE,
+    .bDescriptorSubType = VIDEO_CS_ITF_VS_FORMAT_UNCOMPRESSED,
+    .bFormatIndex = 1, // 1-based
+    .bNumFrameDescriptors = 1,
+    .guidFormat = { TUD_VIDEO_GUID_YUY2 },
+    .bBitsPerPixel = 16,
+    .bDefaultFrameIndex = 1,
+    .bAspectRatioX = 0,
+    .bAspectRatioY = 0,
+    .bmInterlaceFlags = 0,
+    .bCopyProtect = 0
+};
+
+// Full-speed USB iso tops out around 1 MB/s, so 320x240 YUY2 (153600 B) can
+// sustain ~6 fps over the wire even though the sensor runs at 10 fps; the
+// tx-busy gate drops frames when the host asks for more than USB can carry.
+tusb_desc_video_frame_uncompressed_continuous_t const desc_frame = {
+    .bLength = sizeof(tusb_desc_video_frame_uncompressed_continuous_t),
+    .bDescriptorType = TUSB_DESC_CS_INTERFACE,
+    .bDescriptorSubType = VIDEO_CS_ITF_VS_FRAME_UNCOMPRESSED,
+    .bFrameIndex = 1, // 1-based
+    .bmCapabilities = 0,
+    .wWidth = FRAME_W,
+    .wHeight = FRAME_H,
+    .dwMinBitRate = FRAME_W * FRAME_H * 16 * 1,  // 1 fps floor
+    .dwMaxBitRate = FRAME_W * FRAME_H * 16 * 10, // sensor rate
+    .dwMaxVideoFrameBufferSize = FRAME_W * FRAME_H * 16 / 8,
+    .dwDefaultFrameInterval = 1666667, // ~6 fps default (full-speed iso limit)
+    .bFrameIntervalType = 0,           // continuous range
+    .dwFrameInterval = {
+        1000000,  // min interval (max rate): 10 fps
+        10000000, // max interval (min rate): 1 fps
+        1000000   // step
+    }
+};
+
+tusb_desc_video_streaming_color_matching_t const desc_color = {
+    .bLength = sizeof(tusb_desc_video_streaming_color_matching_t),
+    .bDescriptorType = TUSB_DESC_CS_INTERFACE,
+    .bDescriptorSubType = VIDEO_CS_ITF_VS_COLORFORMAT,
+    .bColorPrimaries = VIDEO_COLOR_PRIMARIES_BT709,
+    .bTransferCharacteristics = VIDEO_COLOR_XFER_CH_BT709,
+    .bMatrixCoefficients = VIDEO_COLOR_COEF_SMPTE170M
+};
+
+Adafruit_USBD_Video usb_video;
+
+// Non-blocking frame hand-off: only one UVC transfer in flight at a time.
+// Cleared by tud_video_frame_xfer_complete_cb(); also gates DMA re-arm in
+// vsync_isr so the buffer is never overwritten mid-transmission.
+static volatile bool uvc_tx_busy = false;
+
+// UVC callbacks (overridden from TinyUSB weak defaults)
+extern "C" {
+
+void tud_video_frame_xfer_complete_cb(uint_fast8_t ctl_idx, uint_fast8_t stm_idx) {
+  (void) ctl_idx;
+  (void) stm_idx;
+  uvc_tx_busy = false;
+}
+
+int tud_video_commit_cb(uint_fast8_t ctl_idx, uint_fast8_t stm_idx,
+                        video_probe_and_commit_control_t const *parameters) {
+  (void) ctl_idx;
+  (void) stm_idx;
+  (void) parameters;
+  /* Accept whatever frame interval the host commits; the tx-busy gate drops
+     frames if it asks for more than the USB link can deliver. */
+  return VIDEO_ERROR_NONE;
+}
+
+} // extern "C"
+
+// ---- Diagnostic packets over USB CDC (Serial) ----
+// Frames travel via UVC; diagnostics use a distinct "DBG1" magic so host
+// tools never confuse them with UVC video data.
 #define DBG_MAGIC0 'D'
 #define DBG_MAGIC1 'B'
 #define DBG_MAGIC2 'G'
@@ -107,8 +209,8 @@ static void vsync_isr(uint gpio, uint32_t events) {
   // software flag - the HW EN/BUSY readback is not a reliable "completed"
   // indicator: the config write at setup leaves EN=1 forever, which blocked
   // this guard and meant the channel was never triggered) and the previous
-  // frame has already been consumed by loop().
-  if (!frame_ready && !dma_busy) {
+  // frame has already been consumed by loop() (and is not mid-UVC-transfer).
+  if (!frame_ready && !dma_busy && !uvc_tx_busy) {
     // Drop any residual bytes left in the RX FIFO from the previous frame so
     // the new frame starts pixel-aligned.
     pio_sm_clear_fifos(CAP_PIO, SM_CAPTURE);
@@ -226,8 +328,8 @@ static void reg_readback_send(void) {
   static const uint8_t regs[] = {
       0x0A, // PID         expect 0x76 (OV7670)
       0x0B, // VER         expect 0x73
-      0x12, // COM7        expect 0x14 (QVGA + RGB)
-      0x40, // COM15       expect 0xD0 (RGB565 full range)
+      0x12, // COM7        expect 0x10 (QVGA + YUV)
+      0x40, // COM15       expect 0xC0 (YUV 4:2:2 full range)
       0x15, // COM10       expect 0x02
       0x11, // CLKRC       expect 0x80 (PWM XCLK) / 0x01 (PIO 8 MHz)
       0x6B, // DBLV        expect 0x0A (PLL x2)
@@ -338,6 +440,26 @@ static void capture_pio_setup(void) {
 void setup() {
   Serial.begin(115200); // USB CDC
 
+  // Register the UVC device: camera terminal -> output terminal (streaming),
+  // YUY2 320x240. Without this the descriptors above are dead structs and the
+  // host never sees a video interface (only CDC).
+  if (!TinyUSBDevice.isInitialized()) {
+    TinyUSBDevice.begin(0);
+  }
+  usb_video.addTerminal(&desc_camera_terminal);
+  usb_video.addTerminal(&desc_output_terminal);
+  usb_video.addFormat(&desc_format);
+  usb_video.addFrame(&desc_frame);
+  usb_video.addColorMatching(&desc_color);
+  usb_video.begin();
+  // If the host already enumerated (e.g. reflash without replug), force a
+  // re-enumeration so the new descriptor set is picked up.
+  if (TinyUSBDevice.mounted()) {
+    TinyUSBDevice.detach();
+    delay(10);
+    TinyUSBDevice.attach();
+  }
+
   // Give host a moment to enumerate USB before we start the stream
   delay(1000);
 
@@ -413,8 +535,8 @@ void loop() {
         Serial.write(gpio_edge_probe(PIN_HREF)); // 0=dead, 255=lines flowing
         // Register read-back: prove the init writes landed (a camera that
         // drops writes runs its default state: stuck VSYNC, no HREF).
-        Serial.write(read_reg_checked(0x12)); // COM7 expect 0x14 (QVGA+RGB)
-        Serial.write(read_reg_checked(0x40)); // COM15 expect 0xD0 (RGB565)
+        Serial.write(read_reg_checked(0x12)); // COM7 expect 0x10 (QVGA+YUV)
+        Serial.write(read_reg_checked(0x40)); // COM15 expect 0xC0 (YUV422)
         Serial.write(read_reg_checked(0x15)); // COM10 expect 0x02
         Serial.write(read_reg_checked(0x11)); // CLKRC expect 0x80 (PWM)
         Serial.write(read_reg_checked(0x1e)); // MVFP expect 0x07 (no flip)
@@ -453,21 +575,18 @@ void loop() {
     return;
   }
 
-  // Frame header: "CAM1" + W (2 BE) + H (2 BE) - matches capture.py
-  Serial.write(FRAME_MAGIC0);
-  Serial.write(FRAME_MAGIC1);
-  Serial.write(FRAME_MAGIC2);
-  Serial.write(FRAME_MAGIC3);
-  Serial.write((uint8_t)(FRAME_W >> 8));
-  Serial.write((uint8_t)(FRAME_W & 0xFF));
-  Serial.write((uint8_t)(FRAME_H >> 8));
-  Serial.write((uint8_t)(FRAME_H & 0xFF));
-
-  // Raw RGB565 payload. Serial.write blocks until buffered. The flag is
-  // cleared only AFTER the stream finishes so a VSYNC IRQ during the send
-  // sees frame_ready==true and drops its start request instead of writing
-  // over the buffer being read. The next VSYNC then starts the next frame.
-  Serial.write(frames, FRAME_BYTES);
-  frame_ready = false;
-  last_frame_ms = millis();
+  // Hand the completed frame to TinyUSB's UVC class (non-blocking). Only one
+  // transfer in flight: uvc_tx_busy is cleared by the complete callback, and
+  // vsync_isr also respects it so the DMA never overwrites a frame being read
+  // by USB. When the host is not streaming, drop the frame so the pipeline
+  // keeps rolling and the 3s watchdog below never fires.
+  if (tud_video_n_streaming(0, 0)) {
+    if (!uvc_tx_busy && tud_video_n_frame_xfer(0, 0, frames, FRAME_BYTES)) {
+      uvc_tx_busy = true;
+      frame_ready = false;
+      last_frame_ms = millis();
+    }
+  } else {
+    frame_ready = false;
+  }
 }

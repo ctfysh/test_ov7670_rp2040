@@ -1,13 +1,13 @@
 // OV7670 no-FIFO driver for YD-RP2040
 // - SCCB via hardware I2C0 on SIOC=GP21 / SIOD=GP20, 4.7k pull-ups
-// - QVGA 320x240 RGB565 output
+// - QVGA 320x240 YUV422 YUYV output (UVC YUY2 byte order)
 // - XCLK = 20.8 MHz hardware PWM (add -DXCLK_PWM) or 8 MHz PIO (default)
 //
 // Register/format strategy:
 //   1. Soft reset (COM7 = 0x80)
 //   2. CLKRC/DBLV for 8 MHz XCLK (PIO build only; PWM build keeps table)
 //   3. Known-good full init table (CSDN, tuned for 24 MHz XCLK, QVGA config)
-//   4. Override format to RGB565 + QVGA (window/scaling regs already QVGA
+//   4. Override format to YUV422 YUYV + QVGA (window/scaling regs already QVGA
 //      in the table; only clock-sensitive rows are re-applied)
 
 #include "ov7670.h"
@@ -128,8 +128,9 @@ static const uint8_t OV7670_regs[][2] = {
     {0x3b, 0x0a},
 
     // Output format
-    {0x12, 0x14}, // QVGA(320x240) RGB
-    {0x40, 0xd0}, // COM15: RGB565, full [00]-[FF] range
+    {0x12, 0x10}, // QVGA(320x240) YUV
+    {0x40, 0xc0}, // COM15: full [00]-[FF] range (no RGB565)
+    {0x3d, 0x80}, // COM13: YUYV output order (UVC YUY2)
     {0x8c, 0x00},
 
     // Special effects: normal
@@ -307,7 +308,7 @@ int ov7670_init(void) {
   sleep_ms(10);
   ov7670_write_list(OV7670_regs);
 
-  // ---- Overrides for QVGA RGB565 (always win) ----
+  // ---- Overrides for QVGA YUV422 YUYV (always win) ----
   // Clock: only the 8 MHz PIO XCLK build overrides CLKRC/DBLV. The PWM build
   // (20.8 MHz) keeps the init-table values (0x80/0x0a) verified at 24 MHz;
   // applying the 8 MHz values there pushes the internal clock past spec.
@@ -316,9 +317,10 @@ int ov7670_init(void) {
   ov7670_write_reg(OV7670_REG_DBLV, 1 << 6);
 #endif
 
-  // Output format: QVGA+RGB (base), RGB565 full range
-  ov7670_write_reg(OV7670_REG_COM7, OV7670_COM7_QVGA | OV7670_COM7_RGB);
-  ov7670_write_reg(OV7670_REG_COM15, OV7670_COM15_R00FF | OV7670_COM15_RGB565);
+  // Output format: QVGA+YUV (base), full range, YUYV order
+  ov7670_write_reg(OV7670_REG_COM7, OV7670_COM7_QVGA | OV7670_COM7_YUV);
+  ov7670_write_reg(OV7670_REG_COM15, OV7670_COM15_R00FF);
+  ov7670_write_reg(OV7670_REG_COM13, OV7670_COM13_YUYV);
   ov7670_write_reg(OV7670_REG_MVFP, 0x07); // no mirror/vflip
 
   // Banding filter: 8.3 MHz XCLK @ 60 Hz light uses 52/63; the -DXCLK_PWM
