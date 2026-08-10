@@ -440,6 +440,19 @@ static void capture_pio_setup(void) {
 void setup() {
   Serial.begin(115200); // USB CDC
 
+  // Boot banner: identifies which firmware is running (impl/uvc vs main).
+  // Same code on both branches - USE_TINYUSB picks the string at compile time.
+  Serial.println();
+#ifdef USE_TINYUSB
+  Serial.println("FW: impl/uvc (TinyUSB UVC)");
+#else
+  Serial.println("FW: main (PIO+DMA CDC)");
+#endif
+  Serial.print("Build: ");
+  Serial.print(__DATE__);
+  Serial.print(" ");
+  Serial.println(__TIME__);
+
   // Register the UVC device: camera terminal -> output terminal (streaming),
   // YUY2 320x240. Without this the descriptors above are dead structs and the
   // host never sees a video interface (only CDC).

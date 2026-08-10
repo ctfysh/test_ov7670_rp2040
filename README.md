@@ -13,6 +13,19 @@ macOS / Windows / Linux 直接识别，无需任何自定义协议。
 - **板载诊断**：`'R'` 寄存器回读、`'W'/'S'` 波形采样、`'B'` 软重启进 BOOTSEL（免按键刷固件）
 - **性能**：QVGA 320×240，UVC 声明 1–10 FPS，默认 ~6 FPS（USB 全速 12 Mbps 是瓶颈）
 
+## Branch Strategy
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Reference implementation (PIO + DMA capture, CDC "CAM1" protocol) |
+| `impl/uvc` | Alternative implementation — native USB UVC webcam (TinyUSB), incompatible with CDC "CAM1" protocol, **not merged into main** |
+| `exp/*` | Experimental prototypes (disposable) |
+
+> ⚠️ `impl/*` branches are intentionally not merged into `main`.
+> They represent alternative design choices and are maintained separately.
+> Pull requests from `impl/*` into `main` will generally be closed
+> unless explicitly discussed.
+
 ## 硬件接线
 
 | OV7670 | YD-RP2040 | 物理 Pin | 说明 |
@@ -147,7 +160,7 @@ python3 verify_frame.py frames/capture/camera_frame_*.bmp  # 帧校验
 ```
 
 > `live_view.py` / `capture.py` / `verify_frame.py` 仅适用于旧 CDC CAM1 固件（`main` 分支），
-> 与当前 UVC 固件（`feat/ov7670-uvc`）不兼容，保留供参考。
+> 与当前 UVC 固件（`impl/uvc`）不兼容，保留供参考。
 
 ## 诊断命令（串口发送单字符）
 
@@ -187,7 +200,8 @@ python3 verify_frame.py frames/capture/camera_frame_*.bmp  # 帧校验
 ├── live_view.py            # 旧 CDC 固件：实时查看器（numpy + pygame）
 ├── verify_frame.py         # 帧数据校验工具（旧 CDC 固件）
 ├── docs/
-│   └── OV7670_RP2040_REFERENCE.md
+│   ├── OV7670_RP2040_REFERENCE.md
+│   └── git-branch-strategy.md
 ├── include/                # 头文件目录（PlatformIO 模板）
 ├── lib/                    # 私有库目录（PlatformIO 模板）
 ├── test/                   # 测试目录（PlatformIO 模板）
