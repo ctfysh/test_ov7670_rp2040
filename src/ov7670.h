@@ -97,6 +97,7 @@ extern "C" {
 #define OV7670_COM7_SIZE_MASK 0x38
 #define OV7670_COM7_VGA 0x00
 #define OV7670_COM7_QVGA 0x10
+#define OV7670_COM7_SENSOR_RAW 0x01 // sensor raw 8-bit Bayer data out
 
 // COM15 bits
 #define OV7670_COM15_R00FF 0xC0 // full 0-255 output range
@@ -140,6 +141,18 @@ uint8_t ov7670_bus_levels(void);
 // Full bring-up: reset, RGB565 format, QVGA 320x240.
 // Returns 0 on success.
 int ov7670_init(void);
+
+// Bayer half-window selectors (ov7670_set_bayer_window)
+#define OV7670_BAYER_WINDOW_UPPER 0 // rows 15..252
+#define OV7670_BAYER_WINDOW_LOWER 1 // rows 252..492
+
+// Full bring-up: reset, raw Bayer VGA 640x480 8-bit (Table 2-2 + COM7=0x01).
+// Returns 0 on success.
+int ov7670_init_raw_bayer(void);
+
+// Switch vertical capture window: upper (rows 15..252) or lower (252..492).
+// Returns 0 on success, -1 on invalid half or SCCB failure.
+int ov7670_set_bayer_window(uint8_t half);
 
 #ifdef __cplusplus
 }

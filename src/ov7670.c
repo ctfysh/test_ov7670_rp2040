@@ -337,3 +337,77 @@ int ov7670_init(void) {
 
   return 0;
 }
+
+// ---------------------------------------------------------------------------
+// Raw Bayer (640x480 8-bit) + VGA half-window switching
+// ---------------------------------------------------------------------------
+
+// Pinned raw-Bayer register set (datasheet Table 2-2 + COM7=0x01), 0xFF-term.
+// Written after soft reset; 200us settle per write like OV7670_regs.
+static const uint8_t OV7670_raw_bayer_regs[][2] = {
+    {0x11, 0x01}, // CLKRC
+    {0x6b, 0x0a}, // DBLV
+    {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
+    {0x40, 0xd0}, // COM15: full 0-255 range
+    {0x0c, 0x00}, // COM3
+    {0x3e, 0x00}, // COM14
+    {0x3a, 0x00}, // TSLB
+    {0x17, 0x11}, // HSTART
+    {0x18, 0x61}, // HSTOP
+    {0x32, 0x80}, // HREF
+    {0x19, 0x03}, // VSTART
+    {0x1a, 0x7b}, // VSTOP
+    {0x03, 0x03}, // VREF
+    {0x70, 0x3a}, // SCALING_XSC
+    {0x71, 0x35}, // SCALING_YSC
+    {0x72, 0x11}, // SCALING_DCWCTR
+    {0x73, 0xf0}, // SCALING_PCLK_DIV
+    {0xa2, 0x02}, // SCALING_PCLK_DELAY
+    {0xff, 0xff},
+};
+
+int ov7670_init_raw_bayer(void) {
+  sccb_pins_init();
+
+  // Reset
+  ov7670_write_reg(OV7670_REG_COM7, OV7670_COM7_RESET);
+  sleep_ms(10);
+  ov7670_write_list(OV7670_raw_bayer_regs);
+
+  sleep_ms(300); // tS:REG settling (~10 frames)
+  return 0;
+}
+
+// Window math (datasheet): VSTRT=(VSTART<<2)|VREF[1:0]; VSTOP=(VSTOP<<2)|VREF[3:2].
+// Pinned values:
+//   upper: VSTART=0x03,VSTOP=0x3F,VREF[3:0]=0x3 -> rows 15..252
+//   lower: VSTART=0x3F,VSTOP=0x7B,VREF[3:0]=0x0 -> rows 252..492
+// TSLB[0]=0 MUST be written before any window-register write.
+int ov7670_set_bayer_window(uint8_t half) {
+  uint8_t vstart, vstop, vref_lo;
+  if (half == OV7670_BAYER_WINDOW_UPPER) {
+    vstart = 0x03;
+    vstop = 0x3f;
+    vref_lo = 0x03;
+  } else if (half == OV7670_BAYER_WINDOW_LOWER) {
+    vstart = 0x3f;
+    vstop = 0x7b;
+    vref_lo = 0x00;
+  } else {
+    return -1;
+  }
+
+  if (ov7670_write_reg(OV7670_REG_TSLB, 0x00) != 0) return -1;
+
+  // VREF read-modify-write: preserve bits[7:4] (AGC high bits)
+  uint8_t vref = 0;
+  if (ov7670_read_reg(OV7670_REG_VREF, &vref) != 0) return -1;
+  vref = (uint8_t)((vref & 0xF0) | vref_lo);
+
+  if (ov7670_write_reg(OV7670_REG_VSTART, vstart) != 0) return -1;
+  if (ov7670_write_reg(OV7670_REG_VSTOP, vstop) != 0) return -1;
+  if (ov7670_write_reg(OV7670_REG_VREF, vref) != 0) return -1;
+  sleep_us(200);
+
+  return 0;
+}
