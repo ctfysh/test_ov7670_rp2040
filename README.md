@@ -11,6 +11,7 @@ macOS / Windows / Linux 直接识别，无需任何自定义协议。
 - **零转换**：OV7670 配置为 YUV422 YUYV 输出（COM7=0x10、COM15=0xC0、COM13=0x80），与 UVC YUY2 字节序 1:1 匹配，MCU 不做像素转换
 - **实时查看器**：`live_view_uvc.py`（ffmpeg 按设备名抓流 + OpenCV 显示，支持缩放/向左旋转 90°/S 键存 BMP）
 - **板载诊断**：`'R'` 寄存器回读、`'W'/'S'` 波形采样、`'B'` 软重启进 BOOTSEL（免按键刷固件）
+- **Photo Booth wedge 自愈**：macOS `cameracaptured` 按 (VID, PID) 记忆"坏"摄像头身份；固件在每次会话结束时轮换 USB PID（死传输 watchdog），重开即呈现全新身份（见"Photo Booth wedge 修复"）
 - **性能**：QVGA 320×240，UVC 声明 1–10 FPS，默认 ~6 FPS（USB 全速 12 Mbps 是瓶颈）
 
 ## Branch Strategy
@@ -169,9 +170,35 @@ python3 verify_frame.py frames/capture/camera_frame_*.bmp  # 帧校验
 | `W` | 快速波形采样（GPIO 直读，不干扰采集流水线） |
 | `S` | 慢速波形采样 |
 | `R` | 寄存器回读：验证 init 写入 + 实时 AGC/AEC 状态（`DBG1` 包） |
+| `Q` | 管线状态查询：`fr dma tx str cam`（marker `0xF9`，str=1 表示正在出流） |
+| `V` | UVC 控制计数：`commit` / `power_mode`（marker `0xF7`，wedge 回归用） |
+| `K` | 强制 USB 总线重插（同 PID detach 3s；诊断控制，已证明同 PID 重插不清 wedge） |
 | `B` | 软重启进 BOOTSEL（U 盘模式拖放刷固件） |
 
 板子无响应（主机看不到摄像头、`R` 无 `DBG1` 回复）时先重新上电。
+
+## Photo Booth wedge 修复（macOS）
+
+**问题**：macOS Photo Booth 第 2+ 次打开摄像头时黑屏。实验 A/B/C 证明根因是
+`cameracaptured` 按 (VID, PID) 记忆"坏"的摄像头身份：
+
+- **实验 A**：同 PID 重插（`K`）**不能**清除 wedge —— PID 参与 wedge
+- **实验 B**：改 USB 序列号**无效** —— 序列号不参与 wedge
+- **实验 C**：被 wedge 的重新打开发**零**个 UVC 控制请求（commit 不涨、静默）——
+  设备无法探测"打开尝试"本身，只能让下次打开呈现新身份
+
+**修复**：死传输 watchdog（约 2s 无传输完成 + 5s 冷却）判定会话结束，先
+`TinyUSBDevice.setID(0x2E8A, uvc_pid_rotate_next())` 再 detach/attach 重枚举。
+下一次打开即呈现一个从未被 wedge 的全新 (VID, PID) 身份。
+
+- PID 基值 `0x800A`（与 board JSON 一致），12-bit 计数器 = 4096 个 PID 空间
+- `uvc_pid_rot` 为 RAM 计数：Pico 重启回 `0x800A`（同 Mac 会话内可能仍 wedge，一次"关→开"循环即恢复）
+- 轮换后 macOS 会级联探测新 PID（正常行为，几秒后自动停止），每次会话约消耗 2–4 个 PID
+- 回归验证：`test/verify_wedge_fix.py`（关→轮换→开→切→验证 一键跑通）
+
+> ⚠️ Photo Booth 打开时默认选择内置 FaceTime 摄像头而不是 YD RP2040。
+> 看到黑屏/`str=0` 先检查菜单"摄像头 → YD RP2040"是否选中（`test/pb_switch_cam.sh`
+> 可自动切换），不要误判为 wedge。
 
 ## 性能与已知限制
 
@@ -204,7 +231,13 @@ python3 verify_frame.py frames/capture/camera_frame_*.bmp  # 帧校验
 │   └── git-branch-strategy.md
 ├── include/                # 头文件目录（PlatformIO 模板）
 ├── lib/                    # 私有库目录（PlatformIO 模板）
-├── test/                   # 测试目录（PlatformIO 模板）
+├── test/                   # 主机侧测试（PB wedge 回归 + 查询工具，见 test/README）
+│   ├── pb_common.py        # 共享：串口查找 + DBG1 收发
+│   ├── pb_q_now.py         # Q 状态查询
+│   ├── pb_v_now.py         # V 计数查询
+│   ├── pb_switch_cam.sh    # Photo Booth 切到 YD RP2040（AppleScript）
+│   ├── winid.swift         # PB 窗口定位（截图裁剪用）
+│   └── verify_wedge_fix.py # 一键回归：关→轮换→开→切→验证
 └── src/
     ├── main.cpp            # 主逻辑：PIO 采集 + DMA + TinyUSB UVC 流 + 诊断
     ├── camera.pio          # PIO 程序（XCLK + 捕获）
