@@ -129,6 +129,44 @@ Adafruit_USBD_Video usb_video;
 // Cleared by tud_video_frame_xfer_complete_cb(); also gates DMA re-arm in
 // vsync_isr so the buffer is never overwritten mid-transmission.
 static volatile bool uvc_tx_busy = false;
+// Dead-transfer timeout: macOS AVFoundation/QuickTime closes the BULK UVC
+// stream by simply stopping to poll the IN endpoint - it never sends the
+// SET_INTERFACE(alt 0) that would make tud_video_n_streaming() return
+// false, and TinyUSB never completes or aborts the orphaned in-flight
+// transfer, so the complete callback never fires and uvc_tx_busy latches
+// true forever, freezing the DMA re-arm in vsync_isr. A full frame takes
+// ~150 ms at USB FS, so any transfer still in flight after this is dead.
+#define UVC_TX_TIMEOUT_MS 2000
+static uint32_t uvc_tx_busy_ms = 0; // when the current transfer was queued
+// Cooldown for the dead-transfer watchdog: a detach/attach re-enumeration
+// takes ~1-2 s, so never fire it twice in quick succession.
+static uint32_t last_uvc_reset_ms = 0;
+
+// UVC control-request counters (diagnostic): count VS_COMMIT and
+// VIDEO_POWER_MODE requests the host actually sends. Decides whether a
+// wedged Photo Booth reopen is observable from the device side (host
+// negotiates but never activates the stream) or completely silent (host
+// wedged before any control request -> no device-side auto-recovery).
+static volatile uint32_t uvc_commit_count = 0;
+static volatile uint32_t uvc_power_mode_count = 0;
+
+// PID rotation for the macOS Photo Booth wedge: cameracaptured refuses to
+// serve a USB camera identity it has wedged before, keyed by (VID, PID) only
+// (exp A proved PID participates; exp B proved serial does NOT). The wedge is
+// silent - a wedged reopen sends zero UVC control requests (exp C) - so the
+// device cannot detect the open attempt and must instead present a FRESH PID
+// on every re-enumeration. The dead-transfer watchdog below fires ~2 s after
+// the host stops polling (= session end), so each close rotates the PID and
+// the next open sees an identity that was never wedged. 12-bit counter =
+// 4096 distinct PIDs before reuse; base 0x800A matches the board JSON.
+#define UVC_PID_BASE 0x800A
+#define UVC_PID_MASK 0x0FFF
+static uint32_t uvc_pid_rot = 0; // RAM only: a Pico reboot starts a fresh
+                                 // identity anyway (see wedge test exp A/B/C)
+static uint16_t uvc_pid_rotate_next(void) {
+  uvc_pid_rot = (uvc_pid_rot + 1) & UVC_PID_MASK;
+  return UVC_PID_BASE + uvc_pid_rot;
+}
 
 // UVC callbacks (overridden from TinyUSB weak defaults)
 extern "C" {
@@ -144,8 +182,16 @@ int tud_video_commit_cb(uint_fast8_t ctl_idx, uint_fast8_t stm_idx,
   (void) ctl_idx;
   (void) stm_idx;
   (void) parameters;
+  uvc_commit_count++; // host reached VS_COMMIT: stream was negotiated
   /* Accept whatever frame interval the host commits; the tx-busy gate drops
      frames if it asks for more than the USB link can deliver. */
+  return VIDEO_ERROR_NONE;
+}
+
+int tud_video_power_mode_cb(uint_fast8_t ctl_idx, uint8_t power_mod) {
+  (void) ctl_idx;
+  (void) power_mod;
+  uvc_power_mode_count++; // host sent SET_CUR on VIDEO_POWER_MODE control
   return VIDEO_ERROR_NONE;
 }
 
@@ -356,6 +402,52 @@ static void reg_readback_send(void) {
   }
 }
 
+// ---- On-demand pipeline state (diagnostic, marker 0xF9) ----
+// Host sends 'Q'; MCU replies with DBG1 + 0xF9 + payload:
+//   flags (1): bit0=frame_ready, bit1=dma_busy, bit2=uvc_tx_busy,
+//              bit3=tud_video_n_streaming, bit4=cam_ready
+//   vsync_irq_count (2 BE) + dma_done_count (2 BE) + dma_remain (4 BE)
+//   + 4 activity probes (VSYNC/HREF/PCLK/D0) + uvc_tx_busy_age_ms (4 BE)
+// Unlike the 0xFD watchdog packet (only emitted while frame_ready==false
+// for >3 s), 'Q' reports the pipeline state unconditionally, so the host
+// can observe the state machine across open/close/reopen cycles.
+#define PIPE_MARKER 0xF9
+
+static void pipe_state_send(void) {
+  uint8_t flags = 0;
+  if (frame_ready) flags |= 0x01;
+  if (dma_busy)    flags |= 0x02;
+  if (uvc_tx_busy) flags |= 0x04;
+  if (tud_video_n_streaming(0, 0)) flags |= 0x08;
+  if (cam_ready)   flags |= 0x10;
+  Serial.write(DBG_MAGIC0);
+  Serial.write(DBG_MAGIC1);
+  Serial.write(DBG_MAGIC2);
+  Serial.write(DBG_MAGIC3);
+  Serial.write(PIPE_MARKER);
+  Serial.write(flags);
+  uint32_t vc = vsync_irq_count;
+  Serial.write((uint8_t)(vc >> 8));
+  Serial.write((uint8_t)(vc & 0xFF));
+  uint32_t dc = dma_done_count;
+  Serial.write((uint8_t)(dc >> 8));
+  Serial.write((uint8_t)(dc & 0xFF));
+  uint32_t dma_remain = dma_hw->ch[dma_chan].al3_transfer_count;
+  Serial.write((uint8_t)(dma_remain >> 24));
+  Serial.write((uint8_t)(dma_remain >> 16));
+  Serial.write((uint8_t)(dma_remain >> 8));
+  Serial.write((uint8_t)(dma_remain & 0xFF));
+  Serial.write(gpio_activity_probe(PIN_VSYNC));
+  Serial.write(gpio_activity_probe(PIN_HREF));
+  Serial.write(gpio_activity_probe(PIN_PCLK));
+  Serial.write(gpio_activity_probe(PIN_D0));
+  uint32_t busy_age = uvc_tx_busy ? (uint32_t)(millis() - uvc_tx_busy_ms) : 0;
+  Serial.write((uint8_t)(busy_age >> 24));
+  Serial.write((uint8_t)(busy_age >> 16));
+  Serial.write((uint8_t)(busy_age >> 8));
+  Serial.write((uint8_t)(busy_age & 0xFF));
+}
+
 // ---- Waveform snapshot (diagnostic) ----
 // Host sends 'W' (fast) or 'S' (slow) over USB; MCU replies with
 //   DBG1 + 0xFC + type(0x01|0x02) + count(2 BE) + dur_us(4 BE) + samples
@@ -456,6 +548,13 @@ void setup() {
   // Register the UVC device: camera terminal -> output terminal (streaming),
   // YUY2 320x240. Without this the descriptors above are dead structs and the
   // host never sees a video interface (only CDC).
+  //
+  // Serial identity: exp B proved the macOS Photo Booth wedge does NOT key on
+  // serial - only (VID, PID) participates. A fixed serial string (instead of
+  // the chip-unique-ID default) keeps the device identity byte-stable across
+  // reboots for diagnostics; it plays no role in the wedge fix (which rotates
+  // the PID at runtime, see uvc_pid_rotate_next).
+  TinyUSBDevice.setSerialDescriptor("CAMROT-EXP-B-0002");
   if (!TinyUSBDevice.isInitialized()) {
     TinyUSBDevice.begin(0);
   }
@@ -523,11 +622,92 @@ void loop() {
       // AGC/AEC state (see reg_readback_send). Reply is DBG1 + 0xFB, so the
       // host frame-sync loop passes it through like every other diagnostic.
       reg_readback_send();
+    } else if (c == 'Q') {
+      pipe_state_send();
+    } else if (c == 'V') {
+      // UVC control counters: DBG1 + 0xF7 + commit(4 BE) + power_mode(4 BE).
+      // Decided the wedge question: a wedged reopen sends zero control
+      // requests (commit==0, silent wedge), so the device cannot detect it -
+      // hence the automatic fix rotates the PID on session end instead
+      // (uvc_pid_rotate_next in the dead-transfer watchdog), giving the next
+      // open a fresh identity. Counters stay for regression checks.
+      Serial.write(DBG_MAGIC0);
+      Serial.write(DBG_MAGIC1);
+      Serial.write(DBG_MAGIC2);
+      Serial.write(DBG_MAGIC3);
+      Serial.write((uint8_t)0xF7);
+      uint32_t cc = uvc_commit_count;
+      Serial.write((uint8_t)(cc >> 24));
+      Serial.write((uint8_t)(cc >> 16));
+      Serial.write((uint8_t)(cc >> 8));
+      Serial.write((uint8_t)(cc & 0xFF));
+      uint32_t pm = uvc_power_mode_count;
+      Serial.write((uint8_t)(pm >> 24));
+      Serial.write((uint8_t)(pm >> 16));
+      Serial.write((uint8_t)(pm >> 8));
+      Serial.write((uint8_t)(pm & 0xFF));
+    } else if (c == 'K') {
+      // Forced USB bus replug: detach drives D+ low (true bus disconnect) for
+      // 3 s, then re-enumerates with the SAME PID. Diagnostic control for the
+      // Photo Booth wedge: exp A proved a same-PID replug does NOT clear the
+      // host wedge (only a new PID does, which the watchdog rotates
+      // automatically - see uvc_pid_rotate_next). Kept as the manual control.
+      uvc_tx_busy = false;
+      Serial.write(DBG_MAGIC0);
+      Serial.write(DBG_MAGIC1);
+      Serial.write(DBG_MAGIC2);
+      Serial.write(DBG_MAGIC3);
+      Serial.write((uint8_t)0xFC); // replug marker
+      TinyUSBDevice.detach();
+      delay(3000);
+      TinyUSBDevice.attach();
     } else if (c == 'B') {
       // Software reboot into BOOTSEL: host sends 'B' and the Pico re-enumerates
       // as the RPI-RP2 mass-storage drive for drag-and-drop flashing (no
       // physical button press needed on flash-test-fix iterations).
       reset_usb_boot(0, 0);
+    }
+  }
+
+  // Alt-0 stream close: TinyUSB aborts in-flight transfers on endpoint close,
+  // so tud_video_frame_xfer_complete_cb never fires and uvc_tx_busy latches
+  // true, deadlocking the DMA re-arm in vsync_isr until reboot. The latch
+  // must be released BEFORE the frame_ready gate below: in the deadlock
+  // frame_ready stays false forever (no capture can complete), so loop()
+  // would always take the watchdog branch and return without ever reaching
+  // the streaming check further down. Checking streaming first guarantees the
+  // latch is cleared every pass while the host is disconnected, which lets
+  // vsync_isr re-arm the DMA and the capture pipeline resume; on re-open the
+  // next captured frame is streamed normally.
+  if (!tud_video_n_streaming(0, 0)) {
+    uvc_tx_busy = false;
+  }
+
+  // Dead-transfer watchdog: hosts like macOS Photo Booth close the UVC stream
+  // by simply stopping to poll the BULK IN endpoint - no SET_INTERFACE(alt 0)
+  // - so TinyUSB never completes or aborts the in-flight transfer, the frame-
+  // complete callback never fires and the driver's stm->buffer stays occupied.
+  // The latch alone is cleared above only when streaming reports false, which
+  // never happens for these hosts, and no app-level API exists to abort the
+  // class transfer or reset stm->buffer. Observed: after such a close, a
+  // re-opened session gets 0 frames even with uvc_tx_busy cleared (DMA done,
+  // frame_ready set) because tud_video_n_frame_xfer() keeps returning false.
+  // A full USB re-enumeration re-initializes the video class (buffer released,
+  // state PROBING) and forces the host to re-negotiate the stream, which is
+  // the only recovery that works. Healthy transfers complete in ~166 ms, so
+  // anything still in flight after the timeout is dead by definition.
+  if (uvc_tx_busy && (millis() - uvc_tx_busy_ms) > UVC_TX_TIMEOUT_MS) {
+    if (millis() - last_uvc_reset_ms > 5000) {
+      last_uvc_reset_ms = millis();
+      uvc_tx_busy = false;
+      // macOS cameracaptured wedges Photo Booth per (VID, PID) identity: a
+      // wedged reopen sends zero UVC control requests (exp C), so the device
+      // cannot detect it. Rotating the PID on this session-end re-enumeration
+      // gives the next host open a fresh identity that was never wedged.
+      TinyUSBDevice.setID(0x2E8A, uvc_pid_rotate_next());
+      TinyUSBDevice.detach();
+      delay(20);
+      TinyUSBDevice.attach();
     }
   }
 
@@ -576,6 +756,15 @@ void loop() {
         Serial.write((uint8_t)(dma_ctrl >> 8));
         Serial.write((uint8_t)(dma_ctrl & 0xFF));
         Serial.write((uint8_t)(int8_t)dma_chan); // 0xFF = -1: setup never ran
+        // Pipeline flags: bit0=frame_ready, bit1=dma_busy, bit2=uvc_tx_busy,
+        // bit3=tud_video_n_streaming. Identifies which gate in vsync_isr
+        // blocks the DMA re-arm when the pipeline stalls.
+        uint8_t flags = 0;
+        if (frame_ready) flags |= 0x01;
+        if (dma_busy)    flags |= 0x02;
+        if (uvc_tx_busy) flags |= 0x04;
+        if (tud_video_n_streaming(0, 0)) flags |= 0x08;
+        Serial.write(flags);
         uint32_t vc = vsync_irq_count;
         Serial.write((uint8_t)(vc >> 8));
         Serial.write((uint8_t)(vc & 0xFF));
@@ -596,10 +785,15 @@ void loop() {
   if (tud_video_n_streaming(0, 0)) {
     if (!uvc_tx_busy && tud_video_n_frame_xfer(0, 0, frames, FRAME_BYTES)) {
       uvc_tx_busy = true;
+      uvc_tx_busy_ms = millis();
       frame_ready = false;
       last_frame_ms = millis();
     }
   } else {
     frame_ready = false;
+    // Frame was consumed (dropped) while not streaming: refresh the watchdog
+    // timestamp too, else the 3s "no frame" alarm fires spuriously while the
+    // capture pipeline is in fact completing and dropping frames normally.
+    last_frame_ms = millis();
   }
 }
