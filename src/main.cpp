@@ -9,10 +9,14 @@
 //   loop() streams the completed frame over USB CDC (Serial)
 //
 // Frame size: QVGA 320x240 RGB565 = 153600 bytes (FRAME_W/FRAME_H in
-// platformio.ini). Host protocol (matches capture.py):
+// platformio.ini). RAW_BAYER mode: VGA 640x480 raw Bayer 8-bit captured as
+// 640x240 half-frames (153600 bytes each), "CAM2" magic, 1 byte/px.
+// Host protocol (matches capture.py):
 //   "CAM1" (4 B) + W (u16 BE) + H (u16 BE) + FRAME_BYTES raw RGB565.
-//   capture.py syncs by scanning for the "CAM1" magic, so every diagnostic
-//   packet below uses a distinct "DBG1" magic that the host passes through.
+//   "CAM2" (4 B) + W (u16 BE) + H (u16 BE) + FRAME_BYTES raw Bayer 8-bit.
+//   capture.py/bayer_capture.py sync by scanning for the magic, so every
+//   diagnostic packet below uses a distinct "DBG1" magic that the host passes
+//   through.
 
 #include <Arduino.h>
 
@@ -39,7 +43,12 @@
 #define SM_XCLK 0
 #define SM_CAPTURE 1
 
+// Frame bytes: 1 byte/px in RAW_BAYER (640x240 = 153600), 2 bytes/px RGB565.
+#ifdef RAW_BAYER
+#define FRAME_BYTES (FRAME_W * FRAME_H)     // 640*240*1 = 153600
+#else
 #define FRAME_BYTES (FRAME_W * FRAME_H * 2) // 320*240*2 = 153600
+#endif
 
 // ---- Frame protocol over USB (CAM1: magic + W + H + raw RGB565) ----
 // Pixels are BIG-ENDIAN per pair (OV7670 emits the high byte first; the PIO
@@ -49,7 +58,11 @@
 #define FRAME_MAGIC0 'C'
 #define FRAME_MAGIC1 'A'
 #define FRAME_MAGIC2 'M'
-#define FRAME_MAGIC3 '1'
+#ifdef RAW_BAYER
+#define FRAME_MAGIC3 '2' // CAM2: raw Bayer 8-bit
+#else
+#define FRAME_MAGIC3 '1' // CAM1: RGB565
+#endif
 // Diagnostic packets use a different magic so capture.py's "CAM1" sync
 // loop passes them through without ever matching.
 #define DBG_MAGIC0 'D'
@@ -222,8 +235,58 @@ static uint8_t read_reg_checked(uint8_t reg) {
 // pumping the image while the scene is constant.
 #define REG_MARKER 0xFB
 
+#ifdef RAW_BAYER
+// 'T' handler (near reg_readback_send; ack: DBG1 + 0xF9 + param):
+#define WINDOW_MARKER 0xF9
+
+// 'T' + 1 param byte: 0x00=upper, 0x01=lower. Ack DBG1+0xF9+param echoes the
+// accepted param; DBG1+0xF9+0xFF = invalid param or SCCB failure. Host waits
+// ~2 frames (0.5s) after the ack before capturing the new half.
+static void bayer_window_switch(void) {
+  uint8_t param = 0xFF;
+  uint32_t t0 = millis();
+  while (Serial.available() == 0 && millis() - t0 < 50) {
+    // bounded wait for the param byte (host sends 'T' + byte back-to-back)
+  }
+  if (Serial.available() > 0) {
+    param = (uint8_t)Serial.read();
+  }
+  int ret = -1;
+  if (param == OV7670_BAYER_WINDOW_UPPER) {
+    ret = ov7670_set_bayer_window(OV7670_BAYER_WINDOW_UPPER);
+  } else if (param == OV7670_BAYER_WINDOW_LOWER) {
+    ret = ov7670_set_bayer_window(OV7670_BAYER_WINDOW_LOWER);
+  }
+  Serial.write(DBG_MAGIC0);
+  Serial.write(DBG_MAGIC1);
+  Serial.write(DBG_MAGIC2);
+  Serial.write(DBG_MAGIC3);
+  Serial.write(WINDOW_MARKER);
+  Serial.write(ret == 0 ? param : 0xFF);
+}
+#endif // RAW_BAYER
+
 static void reg_readback_send(void) {
   static const uint8_t regs[] = {
+#ifdef RAW_BAYER
+      0x0A, // PID          expect 0x76 (OV7670)
+      0x0B, // VER          expect 0x73
+      0x12, // COM7         expect 0x01 (sensor raw)
+      0x40, // COM15        expect 0xD0 (full range)
+      0x15, // COM10        live
+      0x11, // CLKRC        expect 0x01 (Table 2-2)
+      0x6B, // DBLV         expect 0x0A (PLL)
+      0x1E, // MVFP         expect 0x07 (no flip)
+      0x13, // COM8         live
+      0x17, // HSTART       expect 0x11
+      0x18, // HSTOP        expect 0x61
+      0x19, // VSTART       expect 0x03 (full window after init)
+      0x1A, // VSTOP        expect 0x7B
+      0x03, // VREF         expect 0x03
+      0x32, // HREF         expect 0x80
+      0x70, // SCALING_XSC  expect 0x3A
+      0x71, // SCALING_YSC  expect 0x35
+#else
       0x0A, // PID         expect 0x76 (OV7670)
       0x0B, // VER         expect 0x73
       0x12, // COM7        expect 0x14 (QVGA + RGB)
@@ -241,6 +304,7 @@ static void reg_readback_send(void) {
       0x32, // HREF        HREF start/end
       0x70, // SCALING_XSC
       0x71, // SCALING_YSC
+#endif
   };
   Serial.write(DBG_MAGIC0);
   Serial.write(DBG_MAGIC1);
@@ -346,6 +410,9 @@ void setup() {
 #else
   Serial.println("FW: main (PIO+DMA CDC)");
 #endif
+#ifdef RAW_BAYER
+  Serial.println("Mode: raw bayer 640x240 (CAM2 half-frames)");
+#endif
   Serial.print("Build: ");
   Serial.print(__DATE__);
   Serial.print(" ");
@@ -378,7 +445,11 @@ void setup() {
     }
   }
 
+#ifdef RAW_BAYER
+  ov7670_init_raw_bayer(); // full VGA window; first 'T' picks the half
+#else
   ov7670_init();
+#endif
   cam_ready = true;
   capture_pio_setup();
   dma_setup();
@@ -407,6 +478,12 @@ void loop() {
       // physical button press needed on flash-test-fix iterations).
       reset_usb_boot(0, 0);
     }
+#ifdef RAW_BAYER
+    else if (c == 'T') {
+      // Half-window switch (raw Bayer only): 'T' + 0x00/0x01. Ack DBG1+0xF9.
+      bayer_window_switch();
+    }
+#endif
   }
 
   if (!frame_ready) {
@@ -426,10 +503,10 @@ void loop() {
         Serial.write(gpio_edge_probe(PIN_HREF)); // 0=dead, 255=lines flowing
         // Register read-back: prove the init writes landed (a camera that
         // drops writes runs its default state: stuck VSYNC, no HREF).
-        Serial.write(read_reg_checked(0x12)); // COM7 expect 0x14 (QVGA+RGB)
-        Serial.write(read_reg_checked(0x40)); // COM15 expect 0xD0 (RGB565)
-        Serial.write(read_reg_checked(0x15)); // COM10 expect 0x02
-        Serial.write(read_reg_checked(0x11)); // CLKRC expect 0x80 (PWM)
+        Serial.write(read_reg_checked(0x12)); // COM7 expect 0x14 (QVGA+RGB) / 0x01 (raw)
+        Serial.write(read_reg_checked(0x40)); // COM15 expect 0xD0 (RGB565 full range)
+        Serial.write(read_reg_checked(0x15)); // COM10 expect 0x02 / live
+        Serial.write(read_reg_checked(0x11)); // CLKRC expect 0x80 (PWM) / 0x01 (raw)
         Serial.write(read_reg_checked(0x1e)); // MVFP expect 0x07 (no flip)
         Serial.write(read_reg_checked(0x6b)); // DBLV expect 0x0A (PLL x2)
         // On-chip state: where the pipeline is actually stuck.
@@ -466,7 +543,7 @@ void loop() {
     return;
   }
 
-  // Frame header: "CAM1" + W (2 BE) + H (2 BE) - matches capture.py
+  // Frame header: "CAM1"/"CAM2" + W (2 BE) + H (2 BE) - matches capture.py
   Serial.write(FRAME_MAGIC0);
   Serial.write(FRAME_MAGIC1);
   Serial.write(FRAME_MAGIC2);
