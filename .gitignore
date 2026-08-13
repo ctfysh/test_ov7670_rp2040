@@ -17,3 +17,6 @@ __pycache__/
 .idea/
 *.swp
 .DS_Store
+
+# Git worktrees (per-branch isolated workspaces)
+.worktrees/
