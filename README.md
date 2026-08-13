@@ -173,7 +173,7 @@ python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
 │   └── git-branch-strategy.md
 ├── include/            # 头文件目录（PlatformIO 模板）
 ├── lib/                # 私有库目录（PlatformIO 模板）
-├── test/               # 测试目录（PlatformIO 模板）
+├── test/               # 测试：纯软件数学验证 + 硬件集成验证（见 test/README.md）
 └── src/
     ├── main.cpp        # 主逻辑：PIO 采集 + DMA + USB 流 + 诊断
     ├── camera.pio      # PIO 程序（XCLK + 捕获）
