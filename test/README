@@ -1,11 +1,83 @@
+# YD-RP2040 UVC — 测试说明
 
-This directory is intended for PlatformIO Test Runner and project tests.
+本项目没有 PlatformIO 单元测试;`test/` 里是 **macOS 主机侧的手动/半自动回归测试**,
+针对 Photo Booth "第 2+ 次打开黑屏" (cameracaptured wedge) 修复。
 
-Unit Testing is a software testing method by which individual units of
-source code, sets of one or more MCU program modules together with associated
-control data, usage procedures, and operating procedures, are tested to
-determine whether they are fit for use. Unit testing finds problems early
-in the development cycle.
+## 文件
 
-More information about PlatformIO Unit Testing:
-- https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+| 文件 | 作用 |
+|------|------|
+| `pb_common.py` | 共享:串口查找 (`/dev/cu.usbmodem*` 最新)、DBG1 协议收发、Q/V 解析 |
+| `pb_q_now.py` | 发送 `Q`,打印管线状态 `fr dma tx str cam` |
+| `pb_v_now.py` | 发送 `V`,打印 `commit` / `power_mode` 计数 |
+| `pb_switch_cam.sh` | AppleScript 把 Photo Booth 摄像头切到 YD RP2040 |
+| `winid.swift` | 输出 Photo Booth 窗口 bounds (`X Y W H`),供截图裁剪 |
+| `verify_wedge_fix.py` | **一键回归**:完整走一遍 关→轮换→开→切→验证 流程 |
+
+## 固件侧依赖
+
+- 固件必须含调试命令 `Q`(管线状态,marker `0xF9`)、`V`(UVC 计数,marker `0xF7`)。
+- 固件必须含死传输 watchdog PID 轮换(`main.cpp` 中 `uvc_pid_rotate_next`)。
+- 每次 PID 轮换后设备会重新枚举,串口会短暂消失——所有脚本都带重试。
+
+## 快速使用
+
+```bash
+# 1. 单点查询(确认设备在线)
+python3 pb_q_now.py          # fr=0 dma=0 tx=0 str=1 cam=1  (正在出流)
+python3 pb_v_now.py          # commit=42 power_mode=7
+
+# 2. 手动把 Photo Booth 切到 YD RP2040(若它显示的是 FaceTime)
+bash pb_switch_cam.sh
+
+# 3. 完整回归(约 1 分钟)
+python3 verify_wedge_fix.py
+```
+
+所有脚本都接受可选串口参数:`python3 pb_q_now.py /dev/cu.usbmodem123456`。
+
+## 三个关键教训(踩过的坑)
+
+1. **Photo Booth 默认打开 FaceTime,不是 YD RP2040。**
+   PB 打开时默认选"FaceTime高清相机(内建)"。看到 `str=0` **先切摄像头再判断**,
+   否则是假警报。切换菜单是 **摄像头**(不是 View):`menu item "YD RP2040" of menu "摄像头"`。
+   首次切换后 PB 偶尔会弹回 FaceTime(macOS 还在探测新 PID),切两次即可。
+
+2. **wedge 的签名是"静默"的:commit==0 && str==0 && 黑屏。**
+   被 wedge 的重新打开会发**零**个 UVC 控制请求(`commit` 不涨),设备侧无法探测到
+   打开尝试本身——所以修复方案是每次会话结束轮换 PID,而不是检测后补救。
+   设备能检测到的是"死传输"(2s 超时),即主机停止轮询 BULK IN 端点。
+
+3. **PID 轮换后 macOS 会级联探测新 PID,这是正常行为,会自动停止。**
+   关掉 PB 后 macOS 会对每个新出现的 PID 做一次探测(commits 增长),
+   几秒后安静下来。`verify_wedge_fix.py` 会等 PID 稳定 8s 再继续。
+   每次会话大约消耗 2-4 个 PID;4096 个空间足够日常使用。
+
+## wedge 修复背景(为什么需要 PID 轮换)
+
+实验 A/B/C 证明(详见根 README):
+
+- macOS `cameracaptured` 按 (VID, PID) 记忆"坏"相机;同 PID 重插**不能**清除 wedge(实验 A)。
+- 序列号**不**参与 wedge(实验 B)。
+- 被 wedge 的重新打开**静默**:零 UVC 控制请求(实验 C)。
+
+因此设备端唯一可靠的自愈是:每次会话结束(session-end 死传输)→ 轮换 PID →
+下次打开呈现一个从未被 wedge 的新身份。`uvc_pid_rot` 是 RAM 计数,重启回 0x800A;
+同 Mac 会话内重启后旧 PID 可能仍被 wedge,但一次"关→开"循环即可恢复。
+
+## verify_wedge_fix.py 流程
+
+```
+[0/3] 基线      读 commit 与当前 PID
+[1/3] 首次会话  开 PB → 切 YD RP2040 → 等 str==1 → commit 必须增长
+[2/3] wedge 场景 关 PB → 等 PID 轮换 + macOS 探测级联稳定(8s) → 开 PB → 再切
+[3/3] 判定      str==1 且 commit 再次增长 且 截图非黑 → PASS
+```
+
+输出截图在 `/tmp/wedge_verify.png`;任何一步失败会指明是哪一步(诊断方向)。
+
+## 依赖
+
+- Python 3 + `pyserial` + `Pillow`(仅 verify 截图分析用)
+- macOS:`osascript`(系统事件/辅助功能权限)、`screencapture`、`swift`(CoreGraphics)
+- Photo Booth 首次使用需在"系统设置 → 隐私与安全性 → 屏幕录制"授权终端
