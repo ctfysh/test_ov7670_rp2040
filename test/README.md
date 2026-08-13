@@ -5,7 +5,10 @@
 | 层 | 文件 | 是否需硬件 | 验证对象 |
 |----|------|-----------|---------|
 | 纯软件数学验证 | `test_pipeline_math.py` | 否（CI 可跑） | 帧协议解析 → RGB565 位提取/扩展 → BMP 呈现的数学正确性 |
-| 硬件集成验证 | `test_hw_integration.py` | 是（真机） | 真机上寄存器回读 / CAM1 帧流 / PIO 波形 / 帧率量级 |
+| 纯软件数学验证 | `test_bayer_math.py` | 否（CI 可跑） | 拜耳去马赛克数学（Layers F/G/H）：RGGB 提取/近邻插值/BMP |
+| 纯软件数学验证 | `test_bayer_capture.py` | 否（CI 可跑） | CAM2 帧封装/滑窗解析/缝合/窗口编码/CFA 均值（Layers I/J/K） |
+| 硬件集成验证 | `test_hw_integration.py` | 是（真机） | 真机上寄存器回读 / CAM1 帧流 / PIO 波形 / 帧率量级（RGB565 固件） |
+| 硬件集成验证 | `test_hw_bayer.py` | 是（真机） | 真机上寄存器回读 / CAM2 帧流 / CFA 分离 / 缝合+去马赛克（raw bayer 固件） |
 
 ## 快速开始
 
@@ -68,3 +71,28 @@ pio run -e rpipico -t upload --upload-port /dev/cu.usbmodemXXXX
 命令**饿死**（实测：慢读时 8s 无响应；大块读时 0.05s 响应）。
 因此 `SerialStream` 用大块 `read(4096)` + 内部缓冲 + `find()` 滑窗同步，
 保证主机吞吐始终高于帧流。这是踩过坑的硬约束，改测试读法时务必保持。
+
+## test_hw_bayer.py — raw bayer 真机验证（4 用例）
+
+在真实 YD-RP2040 + OV7670 上断言 RAW_BAYER 固件的 CAM2 帧协议：
+
+1. **`test_01_reg_readback_raw_bayer_mode`**：`'R'` 回读 17 寄存器，关键位证明
+   raw bayer 模式 — COM7(0x12)=0x01（sensor raw）、COM15(0x40)=0xD0、PID=0x76；
+   **必须先于任何 `'T'` 运行**（断言的是 init 后全窗值 VSTART=0x03/VSTOP=0x7B）
+2. **`test_02_cam2_frame_stats`**：`'T'` upper → ack（DBG1+0xF9+0x00）；CAM2 帧头
+   640×240、载荷完整 153600 B（1 byte/px）、统计特征 = 真实图像
+3. **`test_03_cfa_separation`**：上/下半帧 `cfa_means` 三通道均值差 >4 —— 输出确为
+   拜耳 CFA（灰度误配置的量化噪声 ≤ ~1，分离阈值区分二者）；采集结果缓存供 test_04 复用
+4. **`test_04_stitch_demosaic_bmp`**：`stitch_halves` → (480,640)、`demosaic_bayer` →
+   RGB uint8、`rgb_to_bmp` 头/尺寸公式（54 + 行填充对齐后 480 行）、落盘字节与内存一致
+
+### 固件模式探针（两个硬件文件按 COM7 自选）
+
+同一块板一次只能烧一种固件。两个硬件测试文件在 `setUpClass` 里用 `'R'` 探针读 COM7
+自动互选，**不假装通过也不报错**：
+
+- `test_hw_integration.py`：COM7=0x01（raw bayer 固件）→ 整类 skip（CAM1/RGB565 断言不适用）
+- `test_hw_bayer.py`：COM7≠0x01（非 raw bayer 固件）→ 整类 skip（CAM2 断言不适用）
+
+探针失败（无 DBG1 回复、marker 不符）同样 skip —— 类级 setup 永不 fail。
+无板时两个文件均整类 skip（49 纯软件用例照常通过）。

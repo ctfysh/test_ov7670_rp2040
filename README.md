@@ -84,6 +84,27 @@ USB CDC (Serial) ◀── loop() 发送 "CAM1" + W/H + RGB565 ◀─┘
   `(b[i] << 8) | b[i+1]`；用小端 `b[i] | b[i+1] << 8` 会交换 R/B 并打乱 G。
 - 诊断包用独立的 `"DBG1"` 魔数，`capture.py` 的帧同步循环直接放行，不会误匹配。
 
+## Raw bayer 模式（实验）
+
+`-DRAW_BAYER` 构建把 OV7670 切到 **sensor raw 8-bit**（COM7=0x01）并输出
+VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切换窗口）：
+
+```
+"CAM2" (4 B) | W (u16 BE) | H (u16 BE) | W×H 字节原始 Bayer（1 byte/px）
+```
+
+- **帧协议**：`bayer_capture.py` 按 `"CAM2"` 魔数滑窗同步，`'T'` 上/下半帧
+  各 153600 B，`stitch_halves` 拼回 640×480。
+- **采集 CLI**（依赖 `pyserial`；纯函数层零依赖）：
+  ```bash
+  python3 bayer_capture.py --port /dev/cu.usbmodemXXXX --out bayer_frames --pairs 3 --bmp
+  ```
+  `--out`（默认 `bayer_frames/`）、`--pairs`（上/下帧对数，默认 3）、`--pattern`
+  （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 640×480 BMP）。
+- **固件开关**（`platformio.ini`）：`-DRAW_BAYER -DFRAME_W=640 -DFRAME_H=240`。
+- ⚠️ `capture.py`/`live_view.py` 是 RGB565（CAM1）专用，**未适配 raw bayer**；
+  `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
+
 ## 构建与烧录
 
 依赖：PlatformIO Core（平台 `maxgerhardt/platform-raspberrypi.git`，框架 `arduino` = arduino-pico）。

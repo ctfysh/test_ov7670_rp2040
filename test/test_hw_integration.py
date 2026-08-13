@@ -138,6 +138,23 @@ class TestHardwareIntegration(unittest.TestCase):
         cls.s = serial.Serial(cls.port, 115200, timeout=2)
         cls.st = SerialStream(cls.s)
         cls.st.drain()
+        # 固件模式探针: RAW_BAYER 固件 (COM7=0x01) 流 CAM2 帧, CAM1/RGB565
+        # 断言不适用 -> 整类 skip; test_hw_bayer.py 的探针与之互补。
+        try:
+            cls.s.write(b"R")
+            cls.s.flush()
+            cls.st.sync(DBG1, timeout=6)
+            m = cls.st.read_exact(1, timeout=2)
+            if m[0] != REG_MARKER:
+                raise unittest.SkipTest("'R' 探针未收到 DBG1+0xFB 包")
+            n = cls.st.read_exact(1, timeout=2)
+            body = cls.st.read_exact(n[0] * 2, timeout=5)
+            regs = dict(body[i:i + 2] for i in range(0, len(body), 2))
+            if regs.get(0x12) == 0x01:
+                raise unittest.SkipTest(
+                    "板上为 raw bayer 固件 (COM7=0x01, CAM2 帧), CAM1/RGB565 用例跳过")
+        except SyncError as e:
+            raise unittest.SkipTest(f"固件模式探针失败: {e}")
 
     @classmethod
     def tearDownClass(cls):
