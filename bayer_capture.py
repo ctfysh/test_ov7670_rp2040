@@ -11,6 +11,7 @@ CLI (pyserial 采集) 在 main() 内, __main__ 守卫 -> 可被 unittest import�
 """
 
 import struct
+import time
 
 import numpy as np
 
@@ -78,3 +79,161 @@ def cfa_means(cfa, pattern=DEFAULT_PATTERN):
         vals = cfa[cmap == ch]
         out[ch] = float(vals.mean()) if vals.size else 0.0
     return out
+
+
+# ---- CLI (pyserial; imported inside main() so the pure layer stays dep-free) ----
+
+def _find_port():
+    """Auto-detect the YD-RP2040 CDC port (macOS: /dev/cu.usbmodem*)."""
+    try:
+        import serial.tools.list_ports
+        cdc = [p.device for p in serial.tools.list_ports.comports()
+               if 'usbmodem' in p.device or 'usbserial' in p.device or 'ttyACM' in p.device]
+    except Exception:
+        cdc = []
+    if len(cdc) == 1:
+        return cdc[0]
+    if len(cdc) > 1:
+        return cdc[0]  # first match; --port overrides
+    raise SystemExit("no CDC port found; pass --port")
+
+
+class _Stream:
+    """Buffered serial reader: big read(4096) + sliding-window sync (never
+    byte-at-a-time). DBG1 diagnostics pass through untouched."""
+
+    def __init__(self, ser):
+        self.ser = ser
+        self.buf = b""
+
+    def fill(self):
+        chunk = self.ser.read(4096)
+        if not chunk:
+            return False
+        self.buf += chunk
+        return True
+
+    def drop(self, n):
+        self.buf = self.buf[n:]
+
+
+def _wait_ack(stream, param, timeout_s=5.0):
+    """Wait for 'DBG1' 0xF9 <param>; True on match, False on 0xFF/timeout."""
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        i = stream.buf.find(b"DBG1\xF9")
+        if i >= 0 and i + 6 <= len(stream.buf):
+            got = stream.buf[i + 5]
+            stream.drop(i + 6)
+            return got == param
+        if not stream.fill():
+            time.sleep(0.05)
+    return False
+
+
+def _capture_one(stream, w, h, timeout_s=10.0):
+    """Capture one complete CAM2 frame; returns payload bytes or None."""
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        hit = cam2_parse(stream.buf, w, h)
+        if hit is not None:
+            start, fw, fh = hit
+            end = start + CAM2_HEADER + fw * fh
+            frame = stream.buf[start + CAM2_HEADER:end]
+            stream.drop(end)
+            return frame
+        if not stream.fill():
+            time.sleep(0.05)
+    return None
+
+
+def main(argv=None):
+    import argparse
+    import json
+    import os
+
+    import serial  # CLI-only dependency
+
+    p = argparse.ArgumentParser(
+        description="OV7670 raw Bayer half-frame capture (CAM2 protocol)")
+    p.add_argument("--port", default=None, help="CDC port (auto-detect if omitted)")
+    p.add_argument("--out", default="bayer_frames", help="output directory")
+    p.add_argument("--pairs", type=int, default=3, help="upper/lower frame pairs (default 3)")
+    p.add_argument("--pattern", default=DEFAULT_PATTERN, help="CFA pattern (default RGGB)")
+    p.add_argument("--bmp", action="store_true", help="also write demosaiced 640x480 BMP per pair")
+    args = p.parse_args(argv)
+
+    W, H = 640, 240  # pinned half-frame geometry (firmware RAW_BAYER)
+    port = args.port or _find_port()
+    os.makedirs(args.out, exist_ok=True)
+
+    ser = serial.Serial(port, 115200, timeout=2)
+    print(f"RAW_BAYER capture on {port} -> {args.out}/")
+    ser.reset_input_buffer()
+    stream = _Stream(ser)
+
+    # First command MUST be 'T' upper: after init the window is full VGA.
+    ser.write(b"T" + encode_bayer_window("upper"))
+    if not _wait_ack(stream, 0x00):
+        raise SystemExit("no 'T' upper ack from firmware")
+    time.sleep(0.5)  # ~2 frames settle
+
+    frames = []
+    for i in range(args.pairs):
+        ser.write(b"T" + encode_bayer_window("upper"))
+        if not _wait_ack(stream, 0x00):
+            raise SystemExit(f"pair {i}: no 'T' upper ack")
+        time.sleep(0.5)
+        upper = _capture_one(stream, W, H)
+        if upper is None:
+            raise SystemExit(f"pair {i}: upper frame sync timeout")
+        ser.write(b"T" + encode_bayer_window("lower"))
+        if not _wait_ack(stream, 0x01):
+            raise SystemExit(f"pair {i}: no 'T' lower ack")
+        time.sleep(0.5)
+        lower = _capture_one(stream, W, H)
+        if lower is None:
+            raise SystemExit(f"pair {i}: lower frame sync timeout")
+
+        up = np.frombuffer(upper, dtype=np.uint8).reshape(H, W)
+        lo = np.frombuffer(lower, dtype=np.uint8).reshape(H, W)
+        full = stitch_halves(up, lo)
+
+        with open(os.path.join(args.out, f"upper_{i:03d}.raw"), 'wb') as f:
+            f.write(upper)
+        with open(os.path.join(args.out, f"lower_{i:03d}.raw"), 'wb') as f:
+            f.write(lower)
+        with open(os.path.join(args.out, f"frame_{i:03d}_640x480.raw"), 'wb') as f:
+            f.write(full.tobytes())
+
+        rec = {
+            "index": i,
+            "upper_mean": cfa_means(up, args.pattern),
+            "lower_mean": cfa_means(lo, args.pattern),
+            "stitched_mean": cfa_means(full, args.pattern),
+        }
+        frames.append(rec)
+
+        if args.bmp:
+            import bayer_demosaic
+            rgb = bayer_demosaic.demosaic_bayer(full, pattern=args.pattern)
+            with open(os.path.join(args.out, f"frame_{i:03d}_640x480.bmp"), 'wb') as f:
+                f.write(bayer_demosaic.rgb_to_bmp(W, H, rgb))
+
+        print(f"  pair {i}: upper={rec['upper_mean']} lower={rec['lower_mean']}")
+
+    overall = {}
+    for key in ("upper_mean", "lower_mean", "stitched_mean"):
+        overall[key] = {ch: sum(f[key][ch] for f in frames) / len(frames)
+                        for ch in "RGB"}
+    stats = {"pattern": args.pattern, "pairs": args.pairs,
+             "frames": frames, "overall": overall}
+    with open(os.path.join(args.out, "stats.json"), "w") as f:
+        json.dump(stats, f, indent=2)
+
+    ser.close()
+    print(f"wrote {args.pairs} pair(s) + stats.json to {args.out}/")
+
+
+if __name__ == "__main__":
+    main()
