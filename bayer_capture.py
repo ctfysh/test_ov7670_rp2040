@@ -52,12 +52,27 @@ def cam2_parse(buf, expected_w, expected_h):
 def stitch_halves(upper, lower):
     """上/下半帧 -> 全帧: np.vstack (行 0..239=upper, 240..479=lower)。
 
-    传感器窗口: 上窗行 15..254, 下窗行 252..491 -> 3 行重叠 (252..254),
-    为窗口寄存器方案的已知伪影; 逐半统计才是验证杠杆, 缝合不去重。
+    传感器窗口 (VSTOP 排他, 实测): 上窗行 15..254, 下窗行 252..491 ->
+    3 行真实重叠 (252..254), 重叠行在两半帧中内容一致 (曝光已锁定),
+    vstack 不去重, 重叠行重复一次为已知伪影, 无亮度缝。
     """
     if upper.shape != lower.shape:
         raise ValueError(f"half shape mismatch: {upper.shape} vs {lower.shape}")
     return np.vstack([upper, lower])
+
+
+def overlap_corr(upper, lower, n=3):
+    """重叠行相关: upper 末 n 行 vs lower 前 n 行 (均为 sensor 行 252..254)。
+
+    两半帧在真实重叠区 (3 行) 内容必须一致 (曝光锁定)。corr 显著 < 0.8
+    表示抓到的是陈旧/错窗口帧 (采集竞态), 而非窗口本身出错。
+    """
+    a = upper[-n:].ravel().astype(np.float32)
+    b = lower[:n].ravel().astype(np.float32)
+    a = a - a.mean()
+    b = b - b.mean()
+    d = np.sqrt((a * a).sum() * (b * b).sum())
+    return float((a * b).sum() / (d + 1e-9))
 
 
 def encode_bayer_window(half):
@@ -147,6 +162,26 @@ def _capture_one(stream, w, h, timeout_s=10.0):
     return None
 
 
+def _switch_window(stream, ser, half, settle_s=0.7):
+    """发 'T' 切窗并等待新窗帧稳定, 返回 True=ack OK。
+
+    竞态说明: 固件在收到 'T' 后的下一个 VSYNC 才应用新窗口, 而旧窗口帧
+    此刻仍在 USB 线上传输 (153600 B @ ~660 KB/s ≈ 233 ms/帧)。若在 ack
+    后立即 _capture_one, 会抓到缓冲/线路上遗留的**旧窗口完整帧** (例如
+    'lower' 抓到切换前的 'upper' 内容)。因此必须: ack -> settle 足够久
+    (旧帧全部下线路) -> reset_input_buffer + 清空 stream.buf, 再采集。
+    如此 _capture_one 抓到的第一帧必为新窗口帧。
+    """
+    param = encode_bayer_window(half)
+    ser.write(b"T" + param)
+    if not _wait_ack(stream, param[0]):
+        return False
+    time.sleep(settle_s)
+    ser.reset_input_buffer()
+    stream.buf = b""
+    return True
+
+
 def main(argv=None):
     import argparse
     import json
@@ -173,24 +208,18 @@ def main(argv=None):
     stream = _Stream(ser)
 
     # First command MUST be 'T' upper: after init the window is full VGA.
-    ser.write(b"T" + encode_bayer_window("upper"))
-    if not _wait_ack(stream, 0x00):
+    if not _switch_window(stream, ser, "upper"):
         raise SystemExit("no 'T' upper ack from firmware")
-    time.sleep(0.5)  # ~2 frames settle
 
     frames = []
     for i in range(args.pairs):
-        ser.write(b"T" + encode_bayer_window("upper"))
-        if not _wait_ack(stream, 0x00):
+        if not _switch_window(stream, ser, "upper"):
             raise SystemExit(f"pair {i}: no 'T' upper ack")
-        time.sleep(0.5)
         upper = _capture_one(stream, W, H)
         if upper is None:
             raise SystemExit(f"pair {i}: upper frame sync timeout")
-        ser.write(b"T" + encode_bayer_window("lower"))
-        if not _wait_ack(stream, 0x01):
+        if not _switch_window(stream, ser, "lower"):
             raise SystemExit(f"pair {i}: no 'T' lower ack")
-        time.sleep(0.5)
         lower = _capture_one(stream, W, H)
         if lower is None:
             raise SystemExit(f"pair {i}: lower frame sync timeout")
@@ -198,6 +227,11 @@ def main(argv=None):
         up = np.frombuffer(upper, dtype=np.uint8).reshape(H, W)
         lo = np.frombuffer(lower, dtype=np.uint8).reshape(H, W)
         full = stitch_halves(up, lo)
+
+        # Overlap self-check: upper 末 3 行 == lower 前 3 行 (sensor 252..254)
+        ov = overlap_corr(up, lo)
+        flag = "OK" if ov > 0.6 else "STALE/WRONG WINDOW?"
+        print(f"  pair {i}: overlap corr(upper[-3:],lower[:3])={ov:+.3f} [{flag}]")
 
         with open(os.path.join(args.out, f"upper_{i:03d}.raw"), 'wb') as f:
             f.write(upper)
@@ -217,8 +251,9 @@ def main(argv=None):
         if args.bmp:
             import bayer_demosaic
             rgb = bayer_demosaic.demosaic_bayer(full, pattern=args.pattern)
+            fh, fw = full.shape  # 拼接后全帧 640x480（不是半帧 640x240）
             with open(os.path.join(args.out, f"frame_{i:03d}_640x480.bmp"), 'wb') as f:
-                f.write(bayer_demosaic.rgb_to_bmp(W, H, rgb))
+                f.write(bayer_demosaic.rgb_to_bmp(fw, fh, rgb))
 
         print(f"  pair {i}: upper={rec['upper_mean']} lower={rec['lower_mean']}")
 
