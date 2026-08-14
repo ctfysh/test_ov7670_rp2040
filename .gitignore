@@ -9,6 +9,8 @@
 
 # Generated debug artifacts (camera frames, scripts output)
 frames/
+bayer_out/
+bayer_out_fixed/
 __pycache__/
 *.pyc
 
