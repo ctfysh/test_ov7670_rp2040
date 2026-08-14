@@ -110,8 +110,9 @@ VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切�
     第 8 组 A/B 诊断 env：'C' 直测 640 边沿/行但仅 320 不同字节/行，
     证实 2 PCLK/byte 与寄存器配置无关（详见 `docs/RAW_BAYER_OPERATION_MATH.md`
     §10.5）；该 env 下 `test_03` 预期失败（dup_even=1.000）。
-- ✅ `live_view.py` 已适配 raw bayer（CAM2）：灰度预览 / `--demosaic` 彩色，
-  `T` 键切换上/下半帧；`capture.py` 仍为 RGB565（CAM1）专用。
+- ✅ `live_view.py` 已适配 raw bayer（CAM2）：自动交替发 `'T'` 收上/下半帧，
+  拼接成 **640×480 完整画面**显示（灰度默认 / `--demosaic` 彩色），
+  无信号超时 2s 显示白色 NO-SIGNAL 屏；`capture.py` 仍为 RGB565（CAM1）专用。
   `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
 
 ## 构建与烧录
@@ -161,12 +162,12 @@ python3 live_view.py [port] [scale] [rotate] [--demosaic] [--frames N]
 # 例：2 倍放大 + 向左旋转 90°（默认）
 python3 live_view.py            # port=自动探测, scale=2, rotate=90
 python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
-# raw bayer 固件（CAM2）：--demosaic 彩色预览，--frames 6 退出
+# raw bayer 固件（CAM2）：自动拼接 640×480 完整画面，--demosaic 彩色，--frames 6 退出
 python3 live_view.py --demosaic --frames 6
 ```
 
-按键：`S` 存当前帧（所见即所得 BMP），`T` 切换 CAM2 上/下半帧窗口，
-`Q`/`Esc` 退出。
+按键：`S` 存当前帧（所见即所得 BMP），`T` 强制切换 CAM2 上/下半帧窗口
+（CAM2 默认自动交替拼接，无需手动按），`Q`/`Esc` 退出。无信号时显示白屏。
 
 ## 诊断命令（串口发送单字符）
 

@@ -8,12 +8,14 @@ time with pygame.  Protocol is auto-detected from the frame magic:
   CAM1  "CAM1" + W:H + WxHx2  RGB565 big-endian (default QVGA build)
   CAM2  "CAM2" + W:H + WxH    raw 8-bit Bayer CFA (-DRAW_BAYER build)
 
-CAM2 is shown as grayscale by default (raw CFA values); pass --demosaic for
-a bilinear-interpolated color preview.
+CAM2 is shown as a full 640x480 view by default: the viewer auto-toggles the
+'T' half-window, stitches upper+lower 640x240 halves into one canvas, and
+re-syncs after each switch.  Grayscale by default (raw CFA values); pass
+--demosaic for a bilinear-interpolated color preview.  If no frame arrives
+for NO_SIGNAL_TIMEOUT seconds the screen turns white with "NO SIGNAL".
 
 Keys:
-  T        toggle upper/lower half window (CAM2 only; sends 'T'+0x00/0x01,
-           waits for DBG1+0xF9+param ack, then re-syncs the stream)
+  T        force-switch CAM2 upper/lower half window (auto-toggle also runs)
   S        save current frame as BMP (live_NNN.bmp)
   Q / Esc  quit
 
@@ -43,6 +45,7 @@ CAM1_MAGIC = b"CAM1"
 CAM2_MAGIC = b"CAM2"
 DBG1_F9 = b"DBG1\xF9"  # 'T' ack: DBG1 + 0xF9 + param (0x00 upper / 0x01 lower)
 READ_CHUNK = 4096
+NO_SIGNAL_TIMEOUT = 2.0  # seconds without a valid frame -> white NO-SIGNAL screen
 
 
 def find_port():
@@ -154,7 +157,10 @@ def main():
     print(f"Connected {port}. Waiting for frames...")
 
     pygame.init()
-    screen = None
+    screen = pygame.display.set_mode((640 * scale, 480 * scale))
+    screen.fill((255, 255, 255))
+    pygame.display.set_caption("OV7670 Live — NO SIGNAL  S=save Q=quit")
+    pygame.display.flip()
     font = pygame.font.SysFont("menlo", 16)
     clock = pygame.time.Clock()
 
@@ -169,6 +175,9 @@ def main():
     running = True
     mode = "CAM1"
     half = "upper"
+    canvas = None       # CAM2 full-frame canvas (2H x W x 3); None until first frame
+    last_frame_t = time.time()
+    no_signal_logged = False
 
     while running:
         for ev in pygame.event.get():
@@ -192,9 +201,19 @@ def main():
                         print("  'T' ack timeout (CAM1 build?); ignored")
                     s.reset_input_buffer()  # drop stale CAM2 frames mid-switch
                     stream.buf = b""
+                    canvas = None  # re-stitch from scratch after half switch
 
         magic = stream.sync_magic()
         if magic is None:
+            # no frame in buffer; show white NO-SIGNAL if stale
+            if time.time() - last_frame_t > NO_SIGNAL_TIMEOUT:
+                if not no_signal_logged:
+                    print("no signal: showing white screen", flush=True)
+                    no_signal_logged = True
+                screen.fill((255, 255, 255))
+                screen.blit(font.render("NO SIGNAL", True, (160, 0, 0)), (16, 16))
+                pygame.display.flip()
+            time.sleep(0.05)  # avoid busy loop when no data
             continue
         hdr = stream.read_exact(4)
         if hdr is None:
@@ -206,27 +225,46 @@ def main():
         else:
             mode = "CAM1"
             size = w * h * 2      # 2 bytes/px RGB565
-        if (w, h, magic) != (W, H, magic):
-            W, H = w, h
-            disp_w, disp_h = (H, W) if rot_k % 2 else (W, H)
-            if screen is None:
-                screen = pygame.display.set_mode((disp_w * scale, disp_h * scale))
-            print(f"{mode} resolution {W}x{H} -> display {disp_w}x{disp_h}")
-
         payload = stream.read_exact(size)
         if payload is None:
             continue  # truncated frame, re-sync
+        last_frame_t = time.time()
+        no_signal_logged = False
 
-        # --- decode + rotate + display ---
         if magic == CAM2_MAGIC:
-            img = decode_bayer(payload, W, H, demosaic=demosaic)
+            half_img = decode_bayer(payload, w, h, demosaic=demosaic)
+            # stitch upper/lower half into full-frame white canvas
+            full_h = h * 2
+            if canvas is None or canvas.shape[:2] != (full_h, w):
+                canvas = np.full((full_h, w, 3), 255, dtype=np.uint8)
+            if half == "upper":
+                canvas[:h] = half_img
+            else:
+                canvas[h:] = half_img
+            img = canvas
+            # auto-toggle half so both halves keep refreshing
+            half = "lower" if half == "upper" else "upper"
+            param = 0x00 if half == "upper" else 0x01
+            s.write(b"T" + bytes([param]))
+            if not stream.wait_ack(param, timeout_s=1.0):
+                print("  auto 'T' ack timeout")
+            s.reset_input_buffer()  # drop stale CAM2 frames mid-switch
+            stream.buf = b""
         else:
-            img = decode_rgb565(payload, W, H)
+            img = decode_rgb565(payload, w, h)
+
+        img_h, img_w = img.shape[:2]
+        disp_w, disp_h = (img_h, img_w) if rot_k % 2 else (img_w, img_h)
+        if (disp_w, disp_h) != (W, H):
+            W, H = disp_w, disp_h
+            screen = pygame.display.set_mode((W * scale, H * scale))
+            print(f"{mode} resolution {img_w}x{img_h} -> display {W}x{H}")
+
         if rot_k:
             img = np.rot90(img, k=rot_k)  # k=1: rotate left 90deg (CCW)
         surf = pygame.surfarray.make_surface(np.transpose(img, (1, 0, 2)))
         cur_surf = surf
-        screen.blit(pygame.transform.scale(surf, (disp_w * scale, disp_h * scale)),
+        screen.blit(pygame.transform.scale(surf, (W * scale, H * scale)),
                     (0, 0))
         frames += 1
         total_frames += 1
@@ -235,9 +273,9 @@ def main():
             fps = frames / (now - t0)
             frames = 0
             t0 = now
-        tag = f"{mode}" + (f" [{half}]" if mode == "CAM2" else "")
+        tag = f"{mode}" + (" [stitched]" if magic == CAM2_MAGIC else "")
         pygame.display.set_caption(
-            f"OV7670 Live {tag} {W}x{H} (rot {rot}deg)  S=save T=half Q=quit")
+            f"OV7670 Live {tag} {img_w}x{img_h} (rot {rot}deg)  S=save T=half Q=quit")
         screen.blit(font.render(f"{fps:.1f} FPS", True, (0, 255, 0)), (8, 8))
         pygame.display.flip()
         clock.tick(120)
