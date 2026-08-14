@@ -21,7 +21,7 @@ Keys:
 
 Usage:  python3 live_view.py [port] [scale] [rotate] [--demosaic] [--frames N]
   port     serial port (default: first /dev/cu.usbmodem*)
-  scale    display scale factor (default: 2)
+  scale    display scale factor (default: 1 = original size)
   rotate   counter-clockwise rotation in degrees: 0/90/180/270 (default: 90)
   --demosaic  interpolate CAM2 Bayer to color (bilinear)
   --frames N  exit after N displayed frames (default 0 = run forever)
@@ -143,7 +143,7 @@ def main():
         del clean[i:i + 2]
 
     port = clean[0] if len(clean) > 0 else find_port()
-    scale = int(clean[1]) if len(clean) > 1 else 2
+    scale = int(clean[1]) if len(clean) > 1 else 1
     rot = int(clean[2]) if len(clean) > 2 else 90
     rot_k = (rot // 90) % 4  # np.rot90 k: 1 = CCW 90deg (rotate left)
     if not port:
