@@ -170,6 +170,8 @@ python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
 | `W` | 快速波形采样（GPIO 直读，不干扰采集流水线） |
 | `S` | 慢速波形采样 |
 | `R` | 寄存器回读：验证 init 写入 + 实时 AGC/AEC 状态（`DBG1` 包） |
+| `T` | raw bayer 模式切换上/下半帧窗口（`-DRAW_BAYER` 构建） |
+| `C` | PCLK 边沿直测：SM2 PIO 按行计数 PCLK 上升沿，`DBG1` 包回 4 行 u32 BE（T7 决定性测量，`-DRAW_BAYER` 构建） |
 | `B` | 软重启进 BOOTSEL（U 盘模式拖放刷固件） |
 
 板子无响应（收不到 `CAM1`、`R` 无 `DBG1` 回复）时先重新上电。
@@ -198,6 +200,7 @@ python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
 ├── verify_frame.py     # 帧数据校验工具
 ├── docs/
 │   ├── OV7670_RP2040_REFERENCE.md
+│   ├── RAW_BAYER_OPERATION_MATH.md   # raw bayer 实验主线（T1–T7 结论 + 8 组寄存器配置 A/B + §10 归档）
 │   └── git-branch-strategy.md
 ├── include/            # 头文件目录（PlatformIO 模板）
 ├── lib/                # 私有库目录（PlatformIO 模板）
