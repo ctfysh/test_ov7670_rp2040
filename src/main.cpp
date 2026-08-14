@@ -274,7 +274,7 @@ static void reg_readback_send(void) {
       0x12, // COM7         expect 0x01 (sensor raw)
       0x40, // COM15        expect 0xD0 (full range)
       0x15, // COM10        live
-      0x11, // CLKRC        expect 0x01 (Table 2-2)
+      0x11, // CLKRC        expect 0x80 (20.8 MHz build; fINT = XCLK/2)
       0x6B, // DBLV         expect 0x0A (PLL)
       0x1E, // MVFP         expect 0x07 (no flip)
       0x13, // COM8         live
@@ -284,8 +284,15 @@ static void reg_readback_send(void) {
       0x1A, // VSTOP        expect 0x7B
       0x03, // VREF         expect 0x03
       0x32, // HREF         expect 0x80
-      0x70, // SCALING_XSC  expect 0x3A
-      0x71, // SCALING_YSC  expect 0x35
+      0x70, // SCALING_XSC  expect 0x00 (scaler bypass; matches RGB565 path)
+      0x71, // SCALING_YSC  expect 0x00 (scaler bypass)
+      0x0C, // COM3         expect 0x00 (zoom/downsampling bypass)
+      0x3E, // COM14        expect 0x18 (bit4+bit3 open the 0x73 gate; bits[2:0]=000 PCLK /1)
+      0x72, // DCWCTR       expect 0x00 (no down sampling; default 0x11 = HDS by 2, Table 6-2)
+      0x73, // PCLK_DIV     expect 0x08 (bit[3]=1 bypass divider, matches RGB565)
+      0x74, // REG74        expect 0x20 (Horizontal Scaling Ratio 1x, Table 6-1; matches RGB565)
+      0x75, // REG75        expect 0x0F (not written by init; reset default)
+      0xA2, // PCLK_DELAY   expect 0x02 (Table 2-2 VGA raw ref)
 #else
       0x0A, // PID         expect 0x76 (OV7670)
       0x0B, // VER         expect 0x73

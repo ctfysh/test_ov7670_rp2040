@@ -344,13 +344,37 @@ int ov7670_init(void) {
 
 // Pinned raw-Bayer register set (datasheet Table 2-2 + COM7=0x01), 0xFF-term.
 // Written after soft reset; 200us settle per write like OV7670_regs.
+// T7 root-cause verdict (CONFIRMED 2026-08-14): the 100% horizontal 2x byte
+// duplication is NOT register-fixable — SEVEN live-tested configs all kept
+// dup_even=1.000: XSC/YSC 0x00, PCLK_DIV 0xF0, DCWCTR 0x00, COM14 0x18,
+// PCLK_DIV 0x08 (bit3=1 bypass), REG74 0x20 (1x), and exp7 minimal table
+// (CLKRC 0x01 + COM14 0x08 + DCWCTR 0x11 + 0x73 0x00). In raw mode
+// (COM7=0x01) the sensor holds each distinct byte for 2 PCLKs over a
+// 1280-PCLK line (datasheet Table 6-3 1/2x..1/4x band); the RGB565 path
+// (COM7=0x14) with identical scaling regs does NOT dup -> sensor-side raw
+// property. The fix lives in the PIO program: sample every 2ND PCLK rising
+// edge (camera.pio 6-instr loop) -> recovers all 640 distinct bytes/line.
+// Verified live: dup_even 1.000->0.385; clean Bayer same-plane signature at
+// 640 (colLag2=0.426 >> colLag1=0.146, rowLag2=0.442), absent at 320 reshape
+// -> FRAME_W=640 kept, no geometry change. Cross-frame corr: NEW upper ~0.66 /
+// lower ~0.87 vs OLD 0.29/0.44 (more frame-stable). An earlier byte-level
+// audit (2026-08-14) inferred "320 distinct px/line" from the every-PCLK
+// capture — that inference was WRONG (duplicated bytes made a 640-sample row
+// look like ~320 distinct values); the every-2nd-PCLK experiment supersedes it.
+// Registers below are the best-known config (test_01 readback asserts them);
+// CLKRC 0x80 is build-correct (fINT = XCLK/2 on the 20.8 MHz XCLK_PWM build;
+// 0x01 halves fINT). SCALING_XSC/YSC = 0x00 (scaler bypass; COM3[3]=0
+// digital-zoom bypass, so XSC/YSC are don't-care).
+// MVFP written explicitly: sensor power-on default 0x01 differs from the 0x07
+// the readback test asserts.
 static const uint8_t OV7670_raw_bayer_regs[][2] = {
-    {0x11, 0x01}, // CLKRC
-    {0x6b, 0x0a}, // DBLV
+    {0x11, 0x80}, // CLKRC: fINT = XCLK/2 (verified 20.8 MHz PWM build)
+    {0x6b, 0x0a}, // DBLV: PLL bypass
     {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
     {0x40, 0xd0}, // COM15: full 0-255 range
+    {0x1e, 0x07}, // MVFP: no mirror/vflip (matches RGB565 path)
     {0x0c, 0x00}, // COM3
-    {0x3e, 0x00}, // COM14
+    {0x3e, 0x18}, // COM14: bit4+bit3 open the 0x73 gate; bits[2:0]=000 PCLK /1
     {0x3a, 0x00}, // TSLB
     {0x17, 0x11}, // HSTART
     {0x18, 0x61}, // HSTOP
@@ -358,10 +382,14 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x19, 0x03}, // VSTART
     {0x1a, 0x7b}, // VSTOP
     {0x03, 0x03}, // VREF
-    {0x70, 0x3a}, // SCALING_XSC
-    {0x71, 0x35}, // SCALING_YSC
-    {0x72, 0x11}, // SCALING_DCWCTR
-    {0x73, 0xf0}, // SCALING_PCLK_DIV
+    {0x70, 0x00}, // SCALING_XSC: scaler bypass (matches RGB565 path)
+    {0x71, 0x00}, // SCALING_YSC
+    {0x72, 0x00}, // SCALING_DCWCTR: NO down sampling (HDS=00, VDS=00);
+                  // default 0x11 = HDS by 2 (Table 6-2 line 1986), raw VGA
+                  // needs the full row. NOTE (T7 verdict): dup fix is the PIO
+                  // every-2nd-PCLK sampling, NOT these registers.
+    {0x73, 0x08}, // SCALING_PCLK_DIV: bit[3]=1 bypass divider (matches RGB565)
+    {0x74, 0x20}, // REG74: Horizontal Scaling Ratio 0x20/REG74[6:0]; 0x20=1x (Table 6-1)
     {0xa2, 0x02}, // SCALING_PCLK_DELAY
     {0xff, 0xff},
 };

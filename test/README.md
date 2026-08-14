@@ -76,13 +76,16 @@ pio run -e rpipico -t upload --upload-port /dev/cu.usbmodemXXXX
 
 在真实 YD-RP2040 + OV7670 上断言 RAW_BAYER 固件的 CAM2 帧协议：
 
-1. **`test_01_reg_readback_raw_bayer_mode`**：`'R'` 回读 17 寄存器，关键位证明
+1. **`test_01_reg_readback_raw_bayer_mode`**：`'R'` 回读 24 寄存器，关键位证明
    raw bayer 模式 — COM7(0x12)=0x01（sensor raw）、COM15(0x40)=0xD0、PID=0x76；
    **必须先于任何 `'T'` 运行**（断言的是 init 后全窗值 VSTART=0x03/VSTOP=0x7B）
 2. **`test_02_cam2_frame_stats`**：`'T'` upper → ack（DBG1+0xF9+0x00）；CAM2 帧头
    640×240、载荷完整 153600 B（1 byte/px）、统计特征 = 真实图像
-3. **`test_03_cfa_separation`**：上/下半帧 `cfa_means` 三通道均值差 >4 —— 输出确为
-   拜耳 CFA（灰度误配置的量化噪声 ≤ ~1，分离阈值区分二者）；采集结果缓存供 test_04 复用
+3. **`test_03_no_horizontal_duplication`**：上/下半帧偶数/奇数列逐位相等率 < 0.9
+   —— 排除 raw 模式 2 PCLK/byte 保持造成的字节重复（T7 定论 2026-08-14:
+   七个寄存器候选均无效, 修复 = PIO 每 2nd PCLK 采样; 实测 dup_even
+   1.000→0.385）; 采集结果缓存供 test_04 复用。旧版 CFA 均值差 >4 断言随
+   场景漂移（灰场实测 0.34），已废弃 —— 模式强证明由 test_01 COM7=0x01 回读承担
 4. **`test_04_stitch_demosaic_bmp`**：`stitch_halves` → (480,640)、`demosaic_bayer` →
    RGB uint8、`rgb_to_bmp` 头/尺寸公式（54 + 行填充对齐后 480 行）、落盘字节与内存一致
 

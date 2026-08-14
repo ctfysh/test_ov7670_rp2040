@@ -49,14 +49,15 @@ WINDOW_MARKER = 0xF9
 EXPECT_W, EXPECT_H = 640, 240
 EXPECT_PAYLOAD = EXPECT_W * EXPECT_H  # 153600, 1 byte/px
 
-# 'R' 回读的关键寄存器 -> 期望值 (RAW_BAYER 构建, src/main.cpp 17-reg 表;
-# COM10/COM8 为 live 状态不固定断言)
+# 'R' 回读的关键寄存器 -> 期望值 (RAW_BAYER 构建, src/main.cpp 24-reg 表;
+# COM10/COM8 为 live 状态不固定断言; REG74=0x20 1x 水平缩放比 (Table 6-1);
+# REG75 未写入, 断言 reset 默认值)
 EXPECTED_REGS = {
     0x0A: 0x76,  # PID          OV7670
     0x0B: 0x73,  # VER
     0x12: 0x01,  # COM7         sensor raw 8-bit Bayer out
     0x40: 0xD0,  # COM15        full 0-255 range
-    0x11: 0x01,  # CLKRC        Table 2-2
+    0x11: 0x80,  # CLKRC 20.8 MHz build (fINT=XCLK/2; Table 2-2 0x01 targets 24 MHz)
     0x6B: 0x0A,  # DBLV         PLL
     0x1E: 0x07,  # MVFP         无翻转
     0x17: 0x11,  # HSTART       全窗
@@ -65,8 +66,15 @@ EXPECTED_REGS = {
     0x1A: 0x7B,  # VSTOP
     0x03: 0x03,  # VREF
     0x32: 0x80,  # HREF
-    0x70: 0x3A,  # SCALING_XSC
-    0x71: 0x35,  # SCALING_YSC
+    0x70: 0x00,  # SCALING_XSC: scaler bypass (live-verified; 0x3A 非 dup 因)
+    0x71: 0x00,  # SCALING_YSC
+    0x0C: 0x00,  # COM3         zoom/downsampling bypass
+     0x3E: 0x18,  # COM14        bit4+bit3 open the 0x73 gate; bits[2:0]=000 PCLK /1
+     0x72: 0x00,  # DCWCTR      NO down sampling (HDS=00; 0x11 HDS by 2 -> dup)
+     0x73: 0x08,  # PCLK_DIV    bit[3]=1 bypass divider (matches RGB565; 0xF0 enable -> /2 dup)
+     0x74: 0x20,  # REG74       Horizontal Scaling Ratio 0x20/REG74[6:0]; 0x20=1x (Table 6-1); 0x00 undefined -> dup
+    0x75: 0x0F,  # REG75       init 未写入; reset 默认
+    0xA2: 0x02,  # PCLK_DELAY  Table 2-2 VGA raw ref
 }
 
 
@@ -204,15 +212,21 @@ class TestRawBayerHardware(unittest.TestCase):
     # ---- 用例 (test_01 在前: 先于任何 'T' 断言全窗寄存器) ----
 
     def test_01_reg_readback_raw_bayer_mode(self):
-        """'R': 17 寄存器回读, 关键位证明 raw bayer 模式 (COM7=0x01)。"""
+        """'R': 24 寄存器回读, 关键位证明 raw bayer 模式 (COM7=0x01)。"""
         self.s.write(b"R")
         self.s.flush()
         self._read_dbg_packet(REG_MARKER, timeout=6)
         n = self._read_exact(1, timeout=2)
-        self.assertEqual(n, b"\x11", "寄存器数量应为 17")
-        body = self._read_exact(17 * 2, timeout=5)
-        self.assertEqual(len(body), 34, "17 × (reg,val) 完整")
+        self.assertEqual(n, b"\x18", "寄存器数量应为 24")
+        body = self._read_exact(24 * 2, timeout=5)
+        self.assertEqual(len(body), 48, "24 × (reg,val) 完整")
         regs = dict(body[i:i + 2] for i in range(0, len(body), 2))
+        # 跨次运行残留: 上次 test_03/04 把窗口切到 half, init 全窗值不再成立
+        vstart, vstop = regs.get(0x19, -1), regs.get(0x1A, -1)
+        if vstart == 0x3F or vstop == 0x3F:
+            raise unittest.SkipTest(
+                f"板上窗口残留 half 态 (VSTART=0x{vstart:02X}, VSTOP=0x{vstop:02X}); "
+                "test_01 断言 init 全窗值, 请重新上电/重烧固件后运行")
         for reg, expected in EXPECTED_REGS.items():
             self.assertEqual(regs.get(reg), expected,
                              f"寄存器 0x{reg:02X} 应为 0x{expected:02X} (raw bayer), "
@@ -230,19 +244,33 @@ class TestRawBayerHardware(unittest.TestCase):
         self.assertGreater(distinct, 100,
                            f"真实帧应含 >100 种字节值, 实际 {distinct}")
 
-    def test_03_cfa_separation(self):
-        """上/下半帧 cfa_means: 三通道均值差 >4 -> 输出确为拜耳 CFA。"""
+    def test_03_no_horizontal_duplication(self):
+        """上/下半帧无水平 2x 重复 (dup_even < 0.9): 每字节必须独立采样。
+
+        T7 根因定论 (2026-08-14, CONFIRMED): raw 模式 (COM7=0x01) 下传感器把
+        每个不同字节保持 2 个 PCLK (1280-PCLK 行含 640 个不同字节, datasheet
+        Table 6-3 1/2x..1/4x 段)。七个寄存器候选实测均无法消除 dup_even=1.000
+        (XSC/YSC=0x00, PCLK_DIV=0xF0, DCWCTR=0x00, COM14=0x18, PCLK_DIV=0x08,
+        REG74=0x20, 最小表) -> 修复在 PIO: 每 2 个 PCLK 采样一次 (camera.pio
+        6 指令环)。实测 dup_even 1.000->0.385, 640 宽下 colLag2=0.426 >>
+        colLag1=0.146 (干净 Bayer 签名), 320 重塑无该签名 -> FRAME_W=640 保持。
+        旧 "DSP 水平 1/2 缩放" 假设被上述实验推翻。
+        正常内容下相邻字节是不同滤色器像元 (R-G / G-B), 只在平滑区偶发相等,
+        远低于 1.0 —— 阈值 0.9 双侧留足裕量; 全黑/全灰平场已被 test_02 的
+        >100 种取值断言前置排除。CFA 模式强证明 = test_01 COM7=0x01 回读;
+        旧版 cfa_means 三通道均值差 >4 断言随场景漂移 (灰场实测 0.34), 无法
+        区分灰度误配置与中性场景, 已废弃。
+        """
         self._switch_window("upper")
         upper = self._capture_cam2()
         self._switch_window("lower")
         lower = self._capture_cam2()
         self.__class__.pair = (upper, lower)  # 供 test_04 复用, 免重复采集
         for label, half in (("upper", upper), ("lower", lower)):
-            means = bc.cfa_means(half)
-            spread = max(means.values()) - min(means.values())
-            self.assertGreater(spread, 4.0,
-                               f"{label} 半帧 CFA 三通道均值差应 >4 (分离), "
-                               f"实际 {spread:.2f}: {means}")
+            dup_even = float((half[:, 0::2] == half[:, 1::2]).mean())
+            self.assertLess(dup_even, 0.90,
+                            f"{label} 半帧偶数/奇数列逐位相等率 "
+                            f"{dup_even:.3f} >= 0.9: 疑似 2 PCLK/byte 字节重复")
 
     def test_04_stitch_demosaic_bmp(self):
         """缝合 (480,640) + 去马赛克 RGB + BMP 头/尺寸/落盘一致。"""

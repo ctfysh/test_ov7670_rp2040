@@ -8,76 +8,29 @@
 #include "hardware/pio.h"
 #endif
 
-// ---- //
-// xclk //
-// ---- //
-
-#define xclk_wrap_target 0
-#define xclk_wrap 1
-#define xclk_pio_version 0
-
-static const uint16_t xclk_program_instructions[] = {
-            //     .wrap_target
-    0xe001, //  0: set    pins, 1
-    0xe000, //  1: set    pins, 0
-            //     .wrap
-};
-
-#if !PICO_NO_HARDWARE
-static const struct pio_program xclk_program = {
-    .instructions = xclk_program_instructions,
-    .length = 2,
-    .origin = -1,
-    .pio_version = xclk_pio_version,
-#if PICO_PIO_VERSION > 0
-    .used_gpio_ranges = 0x0
-#endif
-};
-
-static inline pio_sm_config xclk_program_get_default_config(uint offset) {
-    pio_sm_config c = pio_get_default_sm_config();
-    sm_config_set_wrap(&c, offset + xclk_wrap_target, offset + xclk_wrap);
-    return c;
-}
-
-static inline void xclk_program_init(PIO pio, uint sm, uint offset, uint pin) {
-    pio_sm_config c = xclk_program_get_default_config(offset);
-    sm_config_set_set_pins(&c, pin, 1);
-    sm_config_set_out_pins(&c, pin, 1);
-    // Route the pad: with default GPIO_CTRL.OE (GPIO_DIR-sourced) the PIO
-    // set-pins data only reaches the pad when the SIO direction is OUT.
-    pio_gpio_init(pio, pin);
-    gpio_set_dir(pin, GPIO_OUT);
-    pio_sm_init(pio, sm, offset, &c);
-    // 8 MHz out of whatever sysclk is actually running
-    float div = (float)clock_get_hz(clk_sys) / (2.0f * 8000000.0f);
-    pio_sm_set_clkdiv(pio, sm, div);
-    pio_sm_set_enabled(pio, sm, true);
-}
-
-#endif
-
 // ------- //
 // capture //
 // ------- //
 
 #define capture_wrap_target 0
-#define capture_wrap 3
+#define capture_wrap 5
 #define capture_pio_version 0
 
 static const uint16_t capture_program_instructions[] = {
             //     .wrap_target
     0x2091, //  0: wait   1 gpio, 17
     0x2092, //  1: wait   1 gpio, 18
-    0x4008, //  2: in     pins, 8
-    0x2012, //  3: wait   0 gpio, 18
+    0x2012, //  2: wait   0 gpio, 18
+    0x2092, //  3: wait   1 gpio, 18
+    0x4008, //  4: in     pins, 8
+    0x2012, //  5: wait   0 gpio, 18
             //     .wrap
 };
 
 #if !PICO_NO_HARDWARE
 static const struct pio_program capture_program = {
     .instructions = capture_program_instructions,
-    .length = 4,
+    .length = 6,
     .origin = -1,
     .pio_version = capture_pio_version,
 #if PICO_PIO_VERSION > 0
@@ -101,3 +54,4 @@ static inline void capture_program_init(PIO pio, uint sm, uint offset, uint in_b
 }
 
 #endif
+

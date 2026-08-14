@@ -9,16 +9,30 @@
 
 ; ---------------------------------------------------------------------------
 ; pixel capture (SM1)
-; Waits for HREF high, then samples 8 data pins on rising PCLK edge.
+; Waits for HREF high, then samples 8 data pins on EVERY 2ND rising PCLK edge.
 ; One byte per pixel (RGB565 LSB first from camera; paired bytes form a pixel).
 ; WAIT GPIO uses ABSOLUTE GPIO numbers (17/18); 'wait pin' would offset from
 ; the IN base (8), hitting the wrong pins (D0/D1). This is the critical fix
 ; vs the earlier hand-encoded program.
+;
+; Every-2nd-PCLK sampling (T7 verdict, CONFIRMED 2026-08-14): in raw mode the
+; sensor holds each distinct byte for 2 PCLKs over a 1280-PCLK line
+; (dup_even=1.000 across SEVEN register configs; capture path proven identical
+; to the known-good RGB565 worktree). Sampling every 2nd rising edge recovers
+; all 640 distinct bytes/line: live dup_even 1.000->0.385, clean Bayer
+; same-plane signature at 640 (colLag2=0.426 >> colLag1=0.146), absent at 320
+; reshape -> the 640-distinct-byte hypothesis won; FRAME_W=640 kept. The
+; 320-wide hypothesis (would yield only 320 samples/line) is falsified by the
+; clean 640 Bayer signature.
+; Loop must end with PCLK LOW so the loop-start 'wait 1 gpio 18' waits for the
+; NEXT rising edge instead of passing through on the current high level.
 ; ---------------------------------------------------------------------------
-.program image
+.program capture
 .wrap_target
     wait 1 gpio 17     ; HREF high -> line start
-    wait 1 gpio 18     ; PCLK rising edge
-    in pins, 8         ; sample D0-D7 (in_base = GP8..GP15)
+    wait 1 gpio 18     ; PCLK rising edge (skip: byte held 2 PCLKs)
     wait 0 gpio 18     ; PCLK falling edge
+    wait 1 gpio 18     ; next PCLK rising edge -> sample here
+    in pins, 8         ; sample D0-D7 (in_base = GP8..GP15)
+    wait 0 gpio 18     ; PCLK falling edge (end loop LOW)
 .wrap
