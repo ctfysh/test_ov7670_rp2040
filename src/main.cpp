@@ -110,19 +110,77 @@ static volatile uint32_t vsync_irq_count = 0;
 static volatile uint32_t dma_done_count = 0;
 static uint cap_off = 0; // capture program offset in PIO (pc - cap_off = 0..3)
 
-// ---- VSYNC rising edge: kick off next frame DMA ----
+// ---- VSYNC-edge ring diagnostic ('V' command) ----
+// Ground truth for the intermittent rotated-frame bug (bad frames show the
+// window content rotated by K rows with WRAP: fr[r] ~= ref[(r+off)%240]).
+// Every VSYNC rising edge records one byte of pipeline state BEFORE any
+// re-arm side effects:
+//   bit7  = DMA re-armed this edge (guard && HREF-low >= VBLANK_GATE_US)
+//   bit6:5 = SM RX FIFO level (0..4 words; 4 = SM stalled on push)
+//   bit4:2 = capture SM PC - cap_off (0..5; 0 = waiting on HREF high)
+//   bit1  = PCLK level at the edge
+//   bit0  = HREF level at the edge
+// The old invariant "every arming edge has HREF=0 and PC=0 => alignment
+// clean" was FALSE: hblank edges (~14 us HREF-low between lines) satisfy
+// both but arm the DMA mid-window, producing the rotated frames. The fix
+// (vsync_isr) additionally requires HREF-low >= VBLANK_GATE_US at the edge,
+// so bit7 now means the edge was inside the vblank (window not started) and
+// the capture is aligned by construction.
+// Reply: DBG1 + 0xF7 + idx(4 BE, total edges since boot) + VSYNC_RING_LEN *
+// (state byte + ts u16 BE, ts = time_us_32() >> 6 so 64us resolution, wraps
+// 4.19 s; the host uses ts spacing to verify frame<->edge mapping).
+// 1024 entries = 27.2 s at the 37.6 fps sensor rate, comfortably covering a
+// 12-frame USB-limited capture (~10 s+); the old 128-entry ring wrapped out
+// the early arming edges (only 2 of 12 frames mapped).
+#define VSYNC_RING_LEN 1024
+static volatile uint8_t vsync_ring[VSYNC_RING_LEN];
+static volatile uint16_t vsync_ring_ts[VSYNC_RING_LEN];
+static volatile uint32_t vsync_ring_i = 0;
+
+// ---- VSYNC/HREF edge IRQ: frame timing + vblank-gated DMA re-arm ----
+// Rotated-frame root cause (fixed): during multi-fire periods the VSYNC line
+// bursts with spurious edges, all inside HREF=0 gaps. The per-line hblank
+// (~14 us, measured) is also HREF=0, so an edge there passed the old guard
+// (!frame_ready && !dma_busy), armed the DMA mid-window, and the capture SM
+// (line gate `wait 1 gpio 17`, a LEVEL wait) resumed at the next line ->
+// the frame comes out rotated by K rows with wrap. The true frame edge fires
+// 700-800 us into the vblank (measured via 'S'), so gating arming on
+// HREF-low >= VBLANK_GATE_US rejects every hblank edge (~14 us) and every
+// line-active edge (HREF=1) while always passing the real frame edge. Any
+// arming inside vblank is safe: the window's first line has not started.
+#define VBLANK_GATE_US 512
+static volatile uint32_t last_href_fall_us = 0; // ts of last HREF falling edge
+
 static void vsync_isr(uint gpio, uint32_t events) {
-  (void)gpio;
-  (void)events;
+  if (gpio == PIN_HREF && (events & GPIO_IRQ_EDGE_FALL)) {
+    last_href_fall_us = time_us_32();
+    return;
+  }
+  if (gpio != PIN_VSYNC || !(events & GPIO_IRQ_EDGE_RISE)) return;
   vsync_irq_count++;
   int chan = dma_chan;
+  // Record pipeline state at THIS edge (before any re-arm side effects).
+  // bit7 = actually re-armed = guard && vblank_ok.
+  bool vblank_ok =
+      (uint32_t)(time_us_32() - last_href_fall_us) >= VBLANK_GATE_US;
+  bool guard = !frame_ready && !dma_busy && vblank_ok;
+  uint8_t pc = (uint8_t)(pio_sm_get_pc(CAP_PIO, SM_CAPTURE) - cap_off);
+  uint8_t fifo = (uint8_t)pio_sm_get_rx_fifo_level(CAP_PIO, SM_CAPTURE);
+  uint8_t e = (uint8_t)((guard ? 0x80 : 0x00) | ((fifo & 0x03) << 5) |
+                        ((pc & 0x07) << 2) |
+                        (gpio_get(PIN_PCLK) ? 0x02 : 0x00) |
+                        (gpio_get(PIN_HREF) ? 0x01 : 0x00));
+  uint32_t idx = vsync_ring_i++;
+  vsync_ring[idx & (VSYNC_RING_LEN - 1)] = e;
+  vsync_ring_ts[idx & (VSYNC_RING_LEN - 1)] =
+      (uint16_t)(time_us_32() >> 6);
   if (chan < 0) return;
   // Start a new capture only if the previous DMA finished (tracked with a
   // software flag - the HW EN/BUSY readback is not a reliable "completed"
   // indicator: the config write at setup leaves EN=1 forever, which blocked
   // this guard and meant the channel was never triggered) and the previous
   // frame has already been consumed by loop().
-  if (!frame_ready && !dma_busy) {
+  if (guard) {
     // Drop any residual bytes left in the RX FIFO from the previous frame so
     // the new frame starts pixel-aligned.
     pio_sm_clear_fifos(CAP_PIO, SM_CAPTURE);
@@ -278,7 +336,7 @@ static void reg_readback_send(void) {
       0x11, // CLKRC        expect 0x80 (20.8 MHz build; fINT = XCLK/2)
       0x6B, // DBLV         expect 0x0A (PLL)
       0x1E, // MVFP         expect 0x07 (no flip)
-      0x13, // COM8         live
+      0x13, // COM8         expect 0xE1 (AGC+AEC locked for seam-free stitching)
       0x17, // HSTART       expect 0x11
       0x18, // HSTOP        expect 0x61
       0x19, // VSTART       expect 0x03 (full window after init)
@@ -444,6 +502,60 @@ static void pclk_count_send(void) {
   }
 }
 
+// ---- HREF line counter (diagnostic 'H') ----
+// Counts HREF lines over a 1s window on SM2 (href_count program: X decrements
+// once per complete HREF line). Reply: DBG1 + 0xF6 + lines(4 BE) +
+// vsync_delta(4 BE). Host: lines_per_frame = lines / vsync_delta.
+// vsync_delta = RAW vsync edge count (vsync_irq_count), not the armed count:
+// the 1s window busy-waits, so loop() never consumes frames and the DMA
+// arming guard (!frame_ready && !dma_busy) holds -> only ~1 edge would arm.
+// During multi-fire, spurious edges inflate vsync_delta and lines/frame reads
+// LOW (a vertical-timing-instability signal); the ring (bit7) independently
+// proves those edges never arm mid-window, so no rotation. Discriminator:
+// 240 lines/frame = half-window active; 477 = full VGA window (fresh init,
+// no 'T' yet). The 1s blocking window drops a few streaming frames on USB;
+// host sends 'H' standalone.
+#define HREF_COUNT_MARKER 0xF6
+#define HREF_COUNT_WINDOW_MS 1000
+
+static void href_count_send(void) {
+  static uint href_off = 0; // href_count program offset (loaded once)
+  if (href_off == 0) {
+    href_off = pio_add_program(CAP_PIO, &href_count_program);
+  }
+  pio_sm_config c = href_count_program_get_default_config(href_off);
+  pio_sm_init(CAP_PIO, SM_COUNT, href_off, &c);
+  pio_sm_clear_fifos(CAP_PIO, SM_COUNT);
+  pio_sm_set_enabled(CAP_PIO, SM_COUNT, true);
+
+  uint32_t vsync_0 = vsync_irq_count;
+  uint32_t t0 = millis();
+  while (millis() - t0 < HREF_COUNT_WINDOW_MS) {
+  }
+  pio_sm_set_enabled(CAP_PIO, SM_COUNT, false);
+
+  // Read X via single-step: in x,32 -> ISR; push ISR -> FIFO; pop FIFO.
+  pio_sm_exec(CAP_PIO, SM_COUNT, pio_encode_in(pio_x, 32));
+  pio_sm_exec(CAP_PIO, SM_COUNT, pio_encode_push(false, false));
+  uint32_t x = pio_sm_get_blocking(CAP_PIO, SM_COUNT);
+  uint32_t lines = 0xFFFFFFFFu - x;
+  uint32_t vsync_delta = vsync_irq_count - vsync_0;
+
+  Serial.write(DBG_MAGIC0);
+  Serial.write(DBG_MAGIC1);
+  Serial.write(DBG_MAGIC2);
+  Serial.write(DBG_MAGIC3);
+  Serial.write(HREF_COUNT_MARKER);
+  Serial.write((uint8_t)(lines >> 24));
+  Serial.write((uint8_t)(lines >> 16));
+  Serial.write((uint8_t)(lines >> 8));
+  Serial.write((uint8_t)(lines & 0xFF));
+  Serial.write((uint8_t)(vsync_delta >> 24));
+  Serial.write((uint8_t)(vsync_delta >> 16));
+  Serial.write((uint8_t)(vsync_delta >> 8));
+  Serial.write((uint8_t)(vsync_delta & 0xFF));
+}
+
 static void capture_pio_setup(void) {
   // Pixel capture on GP8..GP15
 #ifdef RAW_BAYER_PER_PCLK
@@ -461,12 +573,17 @@ static void capture_pio_setup(void) {
 #endif
 
   // VSYNC as GPIO interrupt (PIO waits on absolute GPIO 17/18 for
-  // HREF/PCLK; VSYNC is handled by GPIO IRQ for frame timing)
+  // HREF/PCLK; VSYNC is handled by GPIO IRQ for frame timing). HREF gets a
+  // falling-edge IRQ too: vsync_isr uses it to measure HREF-low duration so
+  // the DMA only re-arms inside the vblank (see VBLANK_GATE_US above).
   gpio_init(PIN_VSYNC);
   gpio_set_dir(PIN_VSYNC, GPIO_IN);
   gpio_pull_down(PIN_VSYNC);
+  gpio_init(PIN_HREF);
+  gpio_set_dir(PIN_HREF, GPIO_IN);
   gpio_set_irq_enabled_with_callback(PIN_VSYNC, GPIO_IRQ_EDGE_RISE, true,
                                      vsync_isr);
+  gpio_set_irq_enabled(PIN_HREF, GPIO_IRQ_EDGE_FALL, true);
 }
 
 void setup() {
@@ -547,6 +664,30 @@ void loop() {
       // n * (u32 BE remaining countdown). Host: edges = 0xFFFFFFFF - val.
       // Settles 640 vs 1280 PCLK/line (T7) without touching the capture path.
       pclk_count_send();
+    } else if (c == 'H') {
+      // HREF line counter (SM2): reply DBG1 + 0xF6 + lines(4 BE) +
+      // vsync_delta(4 BE) over a 1s window. Host: lines/frame = lines/delta
+      // (240 = half-window active, 477 = full window, varying = instability).
+      href_count_send();
+    } else if (c == 'V') {
+      // VSYNC-edge ring dump (see vsync_isr for the byte layout):
+      // reply DBG1 + 0xF7 + idx(4 BE) + VSYNC_RING_LEN * (state + ts u16 BE).
+      Serial.write(DBG_MAGIC0);
+      Serial.write(DBG_MAGIC1);
+      Serial.write(DBG_MAGIC2);
+      Serial.write(DBG_MAGIC3);
+      Serial.write((uint8_t)0xF7);
+      uint32_t ri = vsync_ring_i;
+      Serial.write((uint8_t)(ri >> 24));
+      Serial.write((uint8_t)(ri >> 16));
+      Serial.write((uint8_t)(ri >> 8));
+      Serial.write((uint8_t)(ri & 0xFF));
+      for (uint32_t i = 0; i < VSYNC_RING_LEN; i++) {
+        Serial.write(vsync_ring[i]);
+        uint16_t t = vsync_ring_ts[i];
+        Serial.write((uint8_t)(t >> 8));
+        Serial.write((uint8_t)(t & 0xFF));
+      }
     } else if (c == 'B') {
       // Software reboot into BOOTSEL: host sends 'B' and the Pico re-enumerates
       // as the RPI-RP2 mass-storage drive for drag-and-drop flashing (no

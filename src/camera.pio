@@ -92,3 +92,24 @@ edge_low:
                         ; wait 1 gpio 18 is a genuinely NEW edge - no recount)
     jmp count_line      ; back to HREF check
 
+; ---------------------------------------------------------------------------
+; HREF line counter (SM2, diagnostic 'H' command)
+; Counts complete HREF lines by decrementing X once per line
+; (wait rise -> wait fall -> jmp x--). X is primed to 0xFFFFFFFF once at
+; program start; after the measurement window the host computes
+; lines = 0xFFFFFFFF - X. Combined with the VSYNC IRQ delta over the same
+; window this yields the sensor's HREF lines/frame: 240 = upper half-window
+; active ('T' sent), 477 = full VGA window (fresh init, no 'T' yet), anything
+; else / varying = sensor vertical-timing instability (the rotation root
+; cause under test). Autopush off; the host reads X by single-stepping
+; 'in x,32' + 'push' via pio_sm_exec.
+; ---------------------------------------------------------------------------
+.program href_count
+    mov x, ~null       ; entry: X = 0xFFFFFFFF (executed once at start)
+.wrap_target
+count_line:
+    wait 1 gpio 17     ; HREF rising -> line start
+    wait 0 gpio 17     ; HREF falling -> line end (one full line seen)
+    jmp x--, count_line ; count it; X wraps only after 2^32-1 lines
+.wrap
+
