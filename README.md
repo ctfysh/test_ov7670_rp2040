@@ -7,7 +7,8 @@ YD-RP2040 无 FIFO OV7670 摄像头采集，通过原生 USB CDC 输出连续 RG
 
 - **无 FIFO 直采**：PIO0 SM1 按 PCLK/HREF 采样 8-bit 像素总线，VSYNC 上升沿触发 DMA 整帧搬运
 - **连续帧流**：`loop()` 通过 USB CDC 背靠背发送 `"CAM1"` 帧（QVGA 320×240 RGB565）
-- **实时查看器**：`live_view.py`（numpy 向量化解码 + pygame 显示，支持缩放/旋转）
+- **实时查看器**：`live_view.py`（numpy 向量化解码 + pygame 显示，支持缩放/旋转；
+  自动识别 `"CAM1"` RGB565 与 `"CAM2"` raw bayer 两种帧流）
 - **单帧捕获**：`capture.py` 落盘 BMP（零依赖，随处可看）
 - **板载诊断**：`'R'` 寄存器回读、`'W'/'S'` 波形采样、`'B'` 软重启进 BOOTSEL（免按键刷固件）
 - **性能**：QVGA @ ~4.2 FPS（USB CDC 全速 12 Mbps 是瓶颈，~660 KB/s 有效吞吐）
@@ -109,7 +110,8 @@ VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切�
     第 8 组 A/B 诊断 env：'C' 直测 640 边沿/行但仅 320 不同字节/行，
     证实 2 PCLK/byte 与寄存器配置无关（详见 `docs/RAW_BAYER_OPERATION_MATH.md`
     §10.5）；该 env 下 `test_03` 预期失败（dup_even=1.000）。
-- ⚠️ `capture.py`/`live_view.py` 是 RGB565（CAM1）专用，**未适配 raw bayer**；
+- ✅ `live_view.py` 已适配 raw bayer（CAM2）：灰度预览 / `--demosaic` 彩色，
+  `T` 键切换上/下半帧；`capture.py` 仍为 RGB565（CAM1）专用。
   `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
 
 ## 构建与烧录
@@ -155,13 +157,16 @@ python3 capture.py /dev/cu.usbmodem141101 frames 10
 ### 实时查看
 
 ```bash
-python3 live_view.py [port] [scale] [rotate]
+python3 live_view.py [port] [scale] [rotate] [--demosaic] [--frames N]
 # 例：2 倍放大 + 向左旋转 90°（默认）
 python3 live_view.py            # port=自动探测, scale=2, rotate=90
 python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
+# raw bayer 固件（CAM2）：--demosaic 彩色预览，--frames 6 退出
+python3 live_view.py --demosaic --frames 6
 ```
 
-按键：`S` 存当前帧（所见即所得 BMP），`Q`/`Esc` 退出。
+按键：`S` 存当前帧（所见即所得 BMP），`T` 切换 CAM2 上/下半帧窗口，
+`Q`/`Esc` 退出。
 
 ## 诊断命令（串口发送单字符）
 
@@ -196,7 +201,7 @@ python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
 ├── wiring_diagram_photo.jpg  # 实际接线照片
 ├── real_product.jpg        # 成品实物图
 ├── capture.py          # 单帧捕获 → BMP
-├── live_view.py        # 实时查看器（numpy + pygame）
+├── live_view.py        # 实时查看器（numpy + pygame；CAM1 RGB565 + CAM2 raw bayer）
 ├── verify_frame.py     # 帧数据校验工具
 ├── docs/
 │   ├── OV7670_RP2040_REFERENCE.md
