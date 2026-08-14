@@ -15,15 +15,20 @@
 ; the IN base (8), hitting the wrong pins (D0/D1). This is the critical fix
 ; vs the earlier hand-encoded program.
 ;
-; Every-2nd-PCLK sampling (T7 verdict, CONFIRMED 2026-08-14): in raw mode the
-; sensor holds each distinct byte for 2 PCLKs over a 1280-PCLK line
-; (dup_even=1.000 across SEVEN register configs; capture path proven identical
-; to the known-good RGB565 worktree). Sampling every 2nd rising edge recovers
-; all 640 distinct bytes/line: live dup_even 1.000->0.385, clean Bayer
-; same-plane signature at 640 (colLag2=0.426 >> colLag1=0.146), absent at 320
-; reshape -> the 640-distinct-byte hypothesis won; FRAME_W=640 kept. The
-; 320-wide hypothesis (would yield only 320 samples/line) is falsified by the
-; clean 640 Bayer signature.
+; Every-2nd-PCLK sampling (T7, measured 2026-08-14): in raw mode (COM7=0x01)
+; per-PCLK sampling yields dup_even=1.000 across SEVEN register configs, and
+; sampling every 2nd PCLK rising edge recovers a clean 640-distinct-byte Bayer
+; line (dup_even 1.000->0.385; same-plane colLag2=0.426 >> colLag1=0.146 at
+; 640 reshape; capture path proven identical to the known-good RGB565
+; worktree, so the duplication is sensor-side). Interpretation: each distinct
+; byte is held for 2 PCLKs over a 1280-PCLK line. NOTE: the 1280-PCLK/line
+; count is INFERRED from dup_even=1.000 + 640 distinct bytes recovered, not
+; directly counted; the datasheet's official raw timing is 640 PCLK/line
+; (Table 3-3: raw PCLK = fINT/2) and Table 6-3's "2 PCLK/byte" belongs to the
+; 1/2x..1/4x horizontal-scaling band (REG74=0x20 => 1x, i.e. 1 PCLK/byte), so
+; the datasheet does NOT explain this behavior — mechanism undetermined. A PIO
+; PCLK-edge counter per HREF line is the pending decisive measurement
+; (640 vs 1280).
 ; Loop must end with PCLK LOW so the loop-start 'wait 1 gpio 18' waits for the
 ; NEXT rising edge instead of passing through on the current high level.
 ; ---------------------------------------------------------------------------
@@ -36,3 +41,54 @@
     in pins, 8         ; sample D0-D7 (in_base = GP8..GP15)
     wait 0 gpio 18     ; PCLK falling edge (end loop LOW)
 .wrap
+
+; ---------------------------------------------------------------------------
+; pixel capture, EVERY PCLK edge (SM1, RAW_BAYER_PER_PCLK build only)
+; Samples 8 data pins on EVERY rising PCLK edge — the official Table 3-3 raw
+; timing model (1 byte/PCLK, 640 PCLK/line). Loaded ONLY in the
+; -DRAW_BAYER_PER_PCLK build (official-config A/B, 8th group): if the official
+; Table 2-2 raw registers make the sensor emit one distinct byte per PCLK,
+; dup_even drops without the every-2nd-PCLK workaround. In the shipped build
+; this program is never loaded (capture above is used instead).
+; ---------------------------------------------------------------------------
+.program capture_per_pclk
+.wrap_target
+    wait 1 gpio 17     ; HREF high -> line start
+    wait 1 gpio 18     ; PCLK rising edge -> sample here
+    in pins, 8         ; sample D0-D7 (in_base = GP8..GP15)
+    wait 0 gpio 18     ; PCLK falling edge (end loop LOW)
+.wrap
+
+; ---------------------------------------------------------------------------
+; per-HREF-line PCLK rising-edge counter (SM2, diagnostic 'C' command)
+; Decisive 640-vs-1280 PCLK/line measurement (T7: is each byte held 2 PCLKs?).
+; Counts PCLK rising edges while HREF is high by counting DOWN X from
+; 0xFFFFFFFF; when HREF falls, pushes the remaining count to the RX FIFO
+; (one 32-bit word per line). Host computes edges = 0xFFFFFFFF - received:
+;   640 edges/line -> 0xFFFFFF80 ; 1280 edges/line -> 0xFFFFFF00.
+; sm_config_set_jmp_pin MUST be set to HREF (absolute GPIO 17) so 'jmp pin'
+; tracks HREF; WAIT uses absolute GPIO 18 for PCLK. Autopush off (explicit
+; push); autopull off (X initialized by mov x, ~null). X==0 saturation guard
+; keeps the count from wrapping if a line exceeds 2^32-1 edges (impossible).
+; The 1280-PCLK/line claim in the capture header is an INFERENCE (dup_even +
+; 640 distinct bytes recovered); this counter is the direct measurement that
+; settles whether the line really has 640 or 1280 PCLK edges.
+; ---------------------------------------------------------------------------
+.program pclk_count
+    wait 0 gpio 17     ; entry: ensure HREF LOW so the first line is clean
+.wrap_target
+    wait 1 gpio 17     ; HREF rising -> line start
+    mov x, ~null       ; X = 0xFFFFFFFF (countdown start)
+count_line:
+    jmp pin, count_edge ; HREF still high? -> count a PCLK rising edge
+    mov isr, x          ; HREF fell: remaining countdown -> ISR
+    push                ; to RX FIFO (one word per line; blocks when full)
+.wrap                   ; -> wait 1 gpio 17 (next line)
+count_edge:
+    wait 1 gpio 18      ; PCLK rising edge (count this one)
+    jmp x--, edge_low   ; X != 0: decrement, continue
+edge_low:
+    wait 0 gpio 18      ; PCLK falling edge (loop ends PCLK LOW, so the next
+                        ; wait 1 gpio 18 is a genuinely NEW edge - no recount)
+    jmp count_line      ; back to HREF check
+

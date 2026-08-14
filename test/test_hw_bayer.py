@@ -45,14 +45,17 @@ CAM2 = b"CAM2"
 DBG1 = b"DBG1"
 REG_MARKER = 0xFB
 WINDOW_MARKER = 0xF9
+PCLK_MARKER = 0xF8
 
 EXPECT_W, EXPECT_H = 640, 240
 EXPECT_PAYLOAD = EXPECT_W * EXPECT_H  # 153600, 1 byte/px
 
 # 'R' 回读的关键寄存器 -> 期望值 (RAW_BAYER 构建, src/main.cpp 24-reg 表;
 # COM10/COM8 为 live 状态不固定断言; REG74=0x20 1x 水平缩放比 (Table 6-1);
-# REG75 未写入, 断言 reset 默认值)
-EXPECTED_REGS = {
+# REG75 未写入, 断言 reset 默认值)。双表: shipped (默认) 与 official
+# (RAW_BAYER_OFFICIAL_REGS 构建, 官方 Table 2-2 Sheet 3 值; 差异寄存器为
+# CLKRC/COM14/XSC/YSC/DCWCTR/PCLK_DIV)。setUpClass 按 CLKRC 探针自动选择。
+EXPECTED_REGS_SHIPPED = {
     0x0A: 0x76,  # PID          OV7670
     0x0B: 0x73,  # VER
     0x12: 0x01,  # COM7         sensor raw 8-bit Bayer out
@@ -69,12 +72,36 @@ EXPECTED_REGS = {
     0x70: 0x00,  # SCALING_XSC: scaler bypass (live-verified; 0x3A 非 dup 因)
     0x71: 0x00,  # SCALING_YSC
     0x0C: 0x00,  # COM3         zoom/downsampling bypass
-     0x3E: 0x18,  # COM14        bit4+bit3 open the 0x73 gate; bits[2:0]=000 PCLK /1
-     0x72: 0x00,  # DCWCTR      NO down sampling (HDS=00; 0x11 HDS by 2 -> dup)
-     0x73: 0x08,  # PCLK_DIV    bit[3]=1 bypass divider (matches RGB565; 0xF0 enable -> /2 dup)
-     0x74: 0x20,  # REG74       Horizontal Scaling Ratio 0x20/REG74[6:0]; 0x20=1x (Table 6-1); 0x00 undefined -> dup
+    0x3E: 0x18,  # COM14        bit4+bit3 open the 0x73 gate; bits[2:0]=000 PCLK /1
+    0x72: 0x00,  # DCWCTR      NO down sampling (HDS=00; 0x11 HDS by 2 -> dup)
+    0x73: 0x08,  # PCLK_DIV    bit[3]=1 bypass divider (matches RGB565; 0xF0 enable -> /2 dup)
+    0x74: 0x20,  # REG74       Horizontal Scaling Ratio 0x20/REG74[6:0]; 0x20=1x (Table 6-1); 0x00 undefined -> dup
     0x75: 0x0F,  # REG75       init 未写入; reset 默认
     0xA2: 0x02,  # PCLK_DELAY  Table 2-2 VGA raw ref
+}
+EXPECTED_REGS_OFFICIAL = {
+    0x0A: 0x76,  # PID          OV7670
+    0x0B: 0x73,  # VER
+    0x12: 0x01,  # COM7         sensor raw 8-bit Bayer out
+    0x40: 0xD0,  # COM15        full 0-255 range
+    0x11: 0x01,  # CLKRC        official Table 2-2 Sheet 3 (24 MHz input ref)
+    0x6B: 0x0A,  # DBLV         PLL
+    0x1E: 0x07,  # MVFP         无翻转
+    0x17: 0x11,  # HSTART       全窗
+    0x18: 0x61,  # HSTOP
+    0x19: 0x03,  # VSTART       全窗 (init 后、任何 'T' 之前)
+    0x1A: 0x7B,  # VSTOP
+    0x03: 0x03,  # VREF
+    0x32: 0x80,  # HREF
+    0x70: 0x3A,  # SCALING_XSC  official Table 2-2 Sheet 3
+    0x71: 0x35,  # SCALING_YSC
+    0x0C: 0x00,  # COM3         official (= shipped)
+    0x3E: 0x00,  # COM14        official
+    0x72: 0x11,  # DCWCTR      official (HDS by 2 per Table 6-2)
+    0x73: 0xF0,  # PCLK_DIV    official (enable divider)
+    0x74: 0x20,  # REG74       kept 1x horizontal ratio (not in Table 2-2)
+    0x75: 0x0F,  # REG75       init 未写入; reset 默认
+    0xA2: 0x02,  # PCLK_DELAY  official (= shipped)
 }
 
 
@@ -160,6 +187,10 @@ class TestRawBayerHardware(unittest.TestCase):
                 raise unittest.SkipTest(
                     f"板上非 raw bayer 固件 (COM7=0x{regs.get(0x12, -1):02X}), "
                     "CAM2 用例跳过 (test_hw_integration 负责 RGB565 固件)")
+            # 第 8 组 A/B: CLKRC=0x01 -> official Table 2-2 构建 (RAW_BAYER_
+            # OFFICIAL_REGS), 否则 shipped 构建。test_01 断言对应期望表。
+            cls.EXPECTED_REGS = (EXPECTED_REGS_OFFICIAL if regs.get(0x11) == 0x01
+                                 else EXPECTED_REGS_SHIPPED)
         except SyncError as e:
             raise unittest.SkipTest(f"固件模式探针失败: {e}")
 
@@ -227,7 +258,7 @@ class TestRawBayerHardware(unittest.TestCase):
             raise unittest.SkipTest(
                 f"板上窗口残留 half 态 (VSTART=0x{vstart:02X}, VSTOP=0x{vstop:02X}); "
                 "test_01 断言 init 全窗值, 请重新上电/重烧固件后运行")
-        for reg, expected in EXPECTED_REGS.items():
+        for reg, expected in self.__class__.EXPECTED_REGS.items():
             self.assertEqual(regs.get(reg), expected,
                              f"寄存器 0x{reg:02X} 应为 0x{expected:02X} (raw bayer), "
                              f"实际 0x{regs.get(reg, -1):02X}")
@@ -247,13 +278,19 @@ class TestRawBayerHardware(unittest.TestCase):
     def test_03_no_horizontal_duplication(self):
         """上/下半帧无水平 2x 重复 (dup_even < 0.9): 每字节必须独立采样。
 
-        T7 根因定论 (2026-08-14, CONFIRMED): raw 模式 (COM7=0x01) 下传感器把
-        每个不同字节保持 2 个 PCLK (1280-PCLK 行含 640 个不同字节, datasheet
-        Table 6-3 1/2x..1/4x 段)。七个寄存器候选实测均无法消除 dup_even=1.000
+        T7 根因定论 (2026-08-14, measured): raw 模式 (COM7=0x01) 下每-PCLK
+        采样得到 dup_even=1.000 (字节重复), 每 2nd PCLK 采样恢复 640 个不同
+        字节 -> 解释为每个字节保持 2 个 PCLK。1280 PCLK/行已由 'C' 命令
+        (SM2 PIO 计数器) 直接计数证实 (test_05), 不再是推断值;
+        datasheet Table 6-3 的 "2 PCLK/byte" 仅属 1/2x..1/4x 缩放段
+        (REG74=0x20 => 1x => 1 PCLK/byte), 官方 raw 时序为 640 PCLK/行
+        (Table 3-3: raw PCLK=fINT/2) —— datasheet 无法解释该实测现象,
+        机制未定。八组寄存器配置实测均无法消除 dup_even=1.000
         (XSC/YSC=0x00, PCLK_DIV=0xF0, DCWCTR=0x00, COM14=0x18, PCLK_DIV=0x08,
-        REG74=0x20, 最小表) -> 修复在 PIO: 每 2 个 PCLK 采样一次 (camera.pio
-        6 指令环)。实测 dup_even 1.000->0.385, 640 宽下 colLag2=0.426 >>
-        colLag1=0.146 (干净 Bayer 签名), 320 重塑无该签名 -> FRAME_W=640 保持。
+        REG74=0x20, 最小表, 官方 Table 2-2 Sheet 3) -> 修复在 PIO: 每 2 个
+        PCLK 采样一次 (camera.pio 6 指令环)。实测 dup_even 1.000->0.385,
+        640 宽下 colLag2=0.426 >> colLag1=0.146 (干净 Bayer 签名), 320 重塑
+        无该签名 -> FRAME_W=640 保持。
         旧 "DSP 水平 1/2 缩放" 假设被上述实验推翻。
         正常内容下相邻字节是不同滤色器像元 (R-G / G-B), 只在平滑区偶发相等,
         远低于 1.0 —— 阈值 0.9 双侧留足裕量; 全黑/全灰平场已被 test_02 的
@@ -298,6 +335,35 @@ class TestRawBayerHardware(unittest.TestCase):
                 f.write(bmp)
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), bmp, "落盘 BMP 与内存字节一致")
+
+    def test_05_pclk_count_per_line(self):
+        """'C': SM2 直接计数每行 PCLK 上升沿 -> ~640 或 ~1280 (T7 决定性测量)。
+
+        T7 结论里的 '1280 PCLK/line' 是推断值 (dup_even=1.000 + 640 个不同
+        字节恢复后反推), 从未被直接计数。'C' 让 SM2 运行 pclk_count 程序,
+        每个 HREF 行 push 一个 u32 BE (从 0xFFFFFFFF 倒数后的剩余计数值);
+        主机换算 edges = 0xFFFFFFFF - value:
+          640 edges/line  -> 0xFFFFFF80  (官方 Table 3-3 raw 时序)
+          1280 edges/line -> 0xFFFFFF00  (每字节保持 2 PCLK)
+        这把 '2 PCLK/byte' 从推断变成直接测量。固件要求: 必须烧带 'C' 命令
+        的新固件 (SM2 计数器, src/main.cpp pclk_count_send); 旧固件无响应
+        会导致 DBG1 同步超时 -> fail, 属预期。
+        """
+        self.s.write(b"C")
+        self.s.flush()
+        self._read_dbg_packet(PCLK_MARKER, timeout=6)
+        n = self._read_exact(1, timeout=2)[0]
+        self.assertGreaterEqual(n, 2,
+                                f"'C' 应收到 >=2 行计数, 实际 {n} (相机无帧?)")
+        body = self._read_exact(n * 4, timeout=5)
+        edges = [0xFFFFFFFF - struct.unpack(">I", body[i:i + 4])[0]
+                 for i in range(0, len(body), 4)]
+        spread = max(edges) - min(edges)
+        self.assertLessEqual(spread, 3,
+                             f"各行 PCLK 数应一致 (±3 边沿同步竞态), 实际 {edges}")
+        e = edges[0]
+        self.assertTrue(abs(e - 640) <= 3 or abs(e - 1280) <= 3,
+                        f"每行 PCLK 上升沿应为 ~640 或 ~1280, 实际 {e}")
 
 
 if __name__ == "__main__":

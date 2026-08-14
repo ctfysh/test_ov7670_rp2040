@@ -42,6 +42,7 @@
 #define CAP_PIO pio0
 #define SM_XCLK 0
 #define SM_CAPTURE 1
+#define SM_COUNT 2 // diagnostic PCLK counter (pclk_count program, 'C' cmd)
 
 // Frame bytes: 1 byte/px in RAW_BAYER (640x240 = 153600), 2 bytes/px RGB565.
 #ifdef RAW_BAYER
@@ -392,10 +393,72 @@ static void wave_capture_slow(void) {
   wave_send_packet(WAVE_TYPE_SLOW, WAVE_SLOW_SAMPLES, time_us_32() - t0);
 }
 
+// ---- Per-HREF-line PCLK edge counter (diagnostic 'C' command) ----
+// Decisive T7 measurement: how many PCLK rising edges fall inside one HREF
+// line? 640 (official Table 3-3 raw timing) or 1280 (each distinct byte held
+// 2 PCLKs)? Runs pclk_count on SM2 while the capture SM1/DMA keep streaming:
+// SM2 pushes one 32-bit word per line = the remaining countdown from
+// 0xFFFFFFFF, so the host computes edges = 0xFFFFFFFF - value:
+//   640 edges/line  -> 0xFFFFFF80
+//   1280 edges/line -> 0xFFFFFF00
+// Reply: DBG1 + 0xF8 + nlines + nlines * (u32 BE remaining count).
+// nlines = 0 means no HREF line was seen within the timeout (camera dead).
+// SM clock stays at 125 MHz (clkdiv 1): the count loop is ~80 ns minimum per
+// edge, so it resolves the 10.4 MHz (96 ns) and 5.2 MHz (192 ns) hypotheses.
+#define COUNT_MARKER 0xF8
+#define COUNT_LINES 4
+
+static void pclk_count_send(void) {
+  static uint cnt_off = 0; // pclk_count program offset (loaded once)
+  if (cnt_off == 0) {
+    cnt_off = pio_add_program(CAP_PIO, &pclk_count_program);
+  }
+  pio_sm_config c = pclk_count_program_get_default_config(cnt_off);
+  // jmp pin must track HREF: absolute GPIO 17, NOT the IN base (8)
+  sm_config_set_jmp_pin(&c, PIN_HREF);
+  pio_sm_init(CAP_PIO, SM_COUNT, cnt_off, &c);
+  pio_sm_clear_fifos(CAP_PIO, SM_COUNT);
+  pio_sm_set_enabled(CAP_PIO, SM_COUNT, true);
+
+  uint32_t vals[COUNT_LINES];
+  uint32_t got = 0;
+  uint32_t t0 = millis();
+  while (got < COUNT_LINES && millis() - t0 < 500) {
+    if (!pio_sm_is_rx_fifo_empty(CAP_PIO, SM_COUNT)) {
+      vals[got++] = pio_sm_get(CAP_PIO, SM_COUNT);
+    }
+  }
+  pio_sm_set_enabled(CAP_PIO, SM_COUNT, false);
+
+  Serial.write(DBG_MAGIC0);
+  Serial.write(DBG_MAGIC1);
+  Serial.write(DBG_MAGIC2);
+  Serial.write(DBG_MAGIC3);
+  Serial.write(COUNT_MARKER);
+  Serial.write((uint8_t)got);
+  for (uint32_t i = 0; i < got; i++) {
+    Serial.write((uint8_t)(vals[i] >> 24));
+    Serial.write((uint8_t)(vals[i] >> 16));
+    Serial.write((uint8_t)(vals[i] >> 8));
+    Serial.write((uint8_t)(vals[i] & 0xFF));
+  }
+}
+
 static void capture_pio_setup(void) {
   // Pixel capture on GP8..GP15
+#ifdef RAW_BAYER_PER_PCLK
+  // Per-PCLK sampling (official Table 3-3 raw timing model: 1 byte/PCLK).
+  // Used by the official-config A/B (8th group): if the official Table 2-2
+  // registers make the sensor emit one distinct byte per PCLK, dup_even
+  // drops without the every-2nd-PCLK workaround. Shipped build never loads
+  // this program (capture above is used instead).
+  cap_off = pio_add_program(CAP_PIO, &capture_per_pclk_program);
+  capture_per_pclk_program_init(CAP_PIO, SM_CAPTURE, cap_off, PIN_D0);
+#else
+  // Every-2nd-PCLK sampling (T7 workaround, shipped build).
   cap_off = pio_add_program(CAP_PIO, &capture_program);
   capture_program_init(CAP_PIO, SM_CAPTURE, cap_off, PIN_D0);
+#endif
 
   // VSYNC as GPIO interrupt (PIO waits on absolute GPIO 17/18 for
   // HREF/PCLK; VSYNC is handled by GPIO IRQ for frame timing)
@@ -479,6 +542,11 @@ void loop() {
       // AGC/AEC state (see reg_readback_send). Reply is DBG1 + 0xFB, so the
       // host frame-sync loop passes it through like every other diagnostic.
       reg_readback_send();
+    } else if (c == 'C') {
+      // Per-HREF-line PCLK edge counter (SM2): reply DBG1 + 0xF8 + n +
+      // n * (u32 BE remaining countdown). Host: edges = 0xFFFFFFFF - val.
+      // Settles 640 vs 1280 PCLK/line (T7) without touching the capture path.
+      pclk_count_send();
     } else if (c == 'B') {
       // Software reboot into BOOTSEL: host sends 'B' and the Pico re-enumerates
       // as the RPI-RP2 mass-storage drive for drag-and-drop flashing (no

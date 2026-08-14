@@ -342,18 +342,65 @@ int ov7670_init(void) {
 // Raw Bayer (640x480 8-bit) + VGA half-window switching
 // ---------------------------------------------------------------------------
 
+#ifdef RAW_BAYER_OFFICIAL_REGS
+// OFFICIAL datasheet Table 2-2 Sheet 3 register set (8th group B of the A/B
+// test): the exact "30 fps VGA Raw Bayer RGB mode" values from the datasheet
+// (24 MHz input clock), kept verbatim. Everything NOT listed by Table 2-2
+// (DBLV/COM15/MVFP/TSLB/window regs/REG74) is carried over from the shipped
+// table so the A/B isolates the Table 2-2 scaling-path values only:
+//   CLKRC 0x01 (vs shipped 0x80), COM14 0x00 (vs 0x18),
+//   XSC 0x3A (vs 0x00), YSC 0x35 (vs 0x00),
+//   DCWCTR 0x11 (vs 0x00), PCLK_DIV 0xF0 (vs 0x08 bypass).
+// A/B question (T7): with per-PCLK sampling (RAW_BAYER_PER_PCLK), does the
+// official register set make the sensor emit ONE distinct byte per PCLK
+// (640 PCLK/line, dup_even < 1) instead of the measured 2-PCLK hold?
+// Caveat: Table 2-2 targets a 24 MHz input clock; on the 20.8 MHz XCLK_PWM
+// build CLKRC=0x01 halves fINT relative to 0x80 (the 'C' PCLK counter and
+// dup_even are clock-rate independent, so the measurement stays decisive).
+// Same soft-reset/settle handling as the shipped table below.
+static const uint8_t OV7670_raw_bayer_regs[][2] = {
+    {0x11, 0x01}, // CLKRC: OFFICIAL 0x01 (Table 2-2; 24 MHz input reference)
+    {0x6b, 0x0a}, // DBLV: PLL bypass (kept from shipped table)
+    {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
+    {0x40, 0xd0}, // COM15: full 0-255 range
+    {0x1e, 0x07}, // MVFP: no mirror/vflip (matches shipped)
+    {0x0c, 0x00}, // COM3: OFFICIAL 0x00 (= shipped)
+    {0x3e, 0x00}, // COM14: OFFICIAL 0x00 (shipped: 0x18)
+    {0x3a, 0x00}, // TSLB: kept (window math requirement, see below)
+    {0x17, 0x11}, // HSTART (window, kept from shipped)
+    {0x18, 0x61}, // HSTOP
+    {0x32, 0x80}, // HREF
+    {0x19, 0x03}, // VSTART
+    {0x1a, 0x7b}, // VSTOP
+    {0x03, 0x03}, // VREF
+    {0x70, 0x3a}, // SCALING_XSC: OFFICIAL 0x3A (shipped: 0x00 scaler bypass)
+    {0x71, 0x35}, // SCALING_YSC: OFFICIAL 0x35
+    {0x72, 0x11}, // SCALING_DCWCTR: OFFICIAL 0x11 (shipped: 0x00 no downsampling)
+    {0x73, 0xf0}, // SCALING_PCLK_DIV: OFFICIAL 0xF0 (shipped: 0x08 bypass)
+    {0x74, 0x20}, // REG74: 1x horizontal ratio (kept; not in Table 2-2)
+    {0xa2, 0x02}, // SCALING_PCLK_DELAY: OFFICIAL 0x02 (= shipped)
+    {0xff, 0xff},
+};
+#else
 // Pinned raw-Bayer register set (datasheet Table 2-2 + COM7=0x01), 0xFF-term.
 // Written after soft reset; 200us settle per write like OV7670_regs.
-// T7 root-cause verdict (CONFIRMED 2026-08-14): the 100% horizontal 2x byte
+// T7 root-cause verdict (measured 2026-08-14): the 100% horizontal 2x byte
 // duplication is NOT register-fixable — SEVEN live-tested configs all kept
 // dup_even=1.000: XSC/YSC 0x00, PCLK_DIV 0xF0, DCWCTR 0x00, COM14 0x18,
 // PCLK_DIV 0x08 (bit3=1 bypass), REG74 0x20 (1x), and exp7 minimal table
 // (CLKRC 0x01 + COM14 0x08 + DCWCTR 0x11 + 0x73 0x00). In raw mode
-// (COM7=0x01) the sensor holds each distinct byte for 2 PCLKs over a
-// 1280-PCLK line (datasheet Table 6-3 1/2x..1/4x band); the RGB565 path
-// (COM7=0x14) with identical scaling regs does NOT dup -> sensor-side raw
-// property. The fix lives in the PIO program: sample every 2ND PCLK rising
-// edge (camera.pio 6-instr loop) -> recovers all 640 distinct bytes/line.
+// (COM7=0x01) per-PCLK sampling duplicates every byte; sampling every 2nd
+// PCLK recovers 640 distinct bytes/line — interpreted as each byte held for
+// 2 PCLKs over a 1280-PCLK line. The RGB565 path (COM7=0x14) with identical
+// scaling regs does NOT dup -> sensor-side raw property. NOTE: this 2-PCLK
+// hold is a MEASURED phenomenon with NO datasheet explanation — Table 6-3's
+// "2 PCLK/byte" applies only to the 1/2x..1/4x horizontal-scaling band
+// (REG74=0x20 => 1x => 1 PCLK/byte), and Table 3-3's official raw timing is
+// 640 PCLK/line (raw PCLK = fINT/2). 1280 PCLK/line is inferred (dup_even +
+// 640 distinct bytes), not directly counted; a PIO PCLK-edge counter per
+// HREF line is the pending decisive measurement. The fix lives in the PIO
+// program: sample every 2ND PCLK rising edge (camera.pio 6-instr loop) ->
+// recovers all 640 distinct bytes/line.
 // Verified live: dup_even 1.000->0.385; clean Bayer same-plane signature at
 // 640 (colLag2=0.426 >> colLag1=0.146, rowLag2=0.442), absent at 320 reshape
 // -> FRAME_W=640 kept, no geometry change. Cross-frame corr: NEW upper ~0.66 /
@@ -393,6 +440,7 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0xa2, 0x02}, // SCALING_PCLK_DELAY
     {0xff, 0xff},
 };
+#endif // RAW_BAYER_OFFICIAL_REGS
 
 int ov7670_init_raw_bayer(void) {
   sccb_pins_init();
