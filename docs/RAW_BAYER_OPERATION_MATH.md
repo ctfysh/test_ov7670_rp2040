@@ -43,7 +43,7 @@
 | 根因 | raw 模式每个不同字节在 PCLK 总线上保持 2 个周期（1280 PCLK/行，640 个不同字节） |
 | 修复 | PIO 程序**每 2 个 PCLK 上升沿采样一次**（camera.pio 6 指令环） |
 | 效果 | `dup_even`：1.000 → **0.385**；Bayer 同面相关签名在 640 宽清晰（colLag2=0.426 >> colLag1=0.146） |
-| 结论 | **不是寄存器可修**——7 组寄存器配置实测均无效；FRAME_W=640 保持，无几何改动 |
+| 结论 | **不是寄存器可修**——8 组寄存器配置实测均无效；FRAME_W=640 保持，无几何改动 |
 
 ---
 
@@ -222,7 +222,7 @@ $$I(y,\ 2x) = I(y,\ 2x+1) \quad \forall\ y,\ x \quad \Rightarrow \quad \text{dup
   远低于 1.0 → 阈值 0.9 双侧留足裕量。
 - 4 帧实测全行 `dup_even = 1.000`（确定性，非噪声）。
 
-### 6.2 七个被证伪的寄存器候选
+### 6.2 八个被证伪的寄存器候选
 
 > 每一组配置都**实测**（改寄存器 → 重烧 → 采集 → 算 dup_even），全部保持 1.000。
 
@@ -235,9 +235,12 @@ $$I(y,\ 2x) = I(y,\ 2x+1) \quad \forall\ y,\ x \quad \Rightarrow \quad \text{dup
 | 5 | PCLK_DIV = 0x08 | bit3=1 旁路（"上一轮修复"） | dup_even = 1.000 |
 | 6 | REG74 = 0x20 | 水平缩放比 1x（Table 6-1） | dup_even = 1.000 |
 | 7 | 最小寄存器表 | CLKRC=0x01 + COM14=0x08 + DCWCTR=0x11 + 0x73=0x00 | dup_even = 1.000 |
+| 8 | 官方 Table 2-2 Sheet 3 全表 | datasheet 官方 raw 参考配置（`RAW_BAYER_OFFICIAL_REGS`） | dup_even = 1.000（per-PCLK 采样）；'C' 直测 640 边沿/行但仅 320 个不同字节/行（§10.5） |
 
 **结论：不是寄存器可修的。** 所有缩放相关寄存器都无法影响输出模式；
 同帧捕获路径与已知可用的 RGB565 worktree 逐字节一致（排除固件采集 bug）。
+第 8 组进一步表明：即使官方缩放配置把边沿数降到 640/行，行内不同字节也
+同步减半到 320（DCWCTR=0x11 HDS by 2）→ 每字节仍保持 2 PCLK，与配置无关。
 
 ### 6.3 两个竞争假设
 
@@ -248,8 +251,26 @@ $$I(y,\ 2x) = I(y,\ 2x+1) \quad \forall\ y,\ x \quad \Rightarrow \quad \text{dup
   → 修复应在采样侧（PIO 每 2nd PCLK 采样）。
 
 datasheet Table 6-3 把 PCLK/byte 绑定到水平缩放因子段
-（1x..1/2x → 1 PCLK/byte；1/2x..1/4x → 2 PCLK/byte），raw 模式未定义比值
-落入 1/2x..1/4x 段 → 恒定 2 PCLK/byte —— 与假设 B 的机制一致。
+（1x..1/2x → 1 PCLK/byte；1/2x..1/4x → 2 PCLK/byte）。**该表不适用于本项目
+raw 配置**：REG74=0x20 → `0x20/0x20` = 1x，按表落在 1x..1/2x 段 → 应为
+1 PCLK/byte（早前文档把 2 PCLK/byte 归因于 1/2x..1/4x 段，是错误的，已更正）。
+
+官方 raw 时序（datasheet Table 3-3）：VGA Bayer RGB 的 PCLK = fINT/2
+（同为 fINT=24MHz 时 YUV PCLK=24MHz、Bayer PCLK=12MHz）→ 640 像元行 =
+**640 PCLK/行、1 byte/PCLK**。Linux 驱动（drivers/media/i2c/ov7670.c）印证：
+`fps = 5/2*pixclk for RAW`（YUV/RGB 为 5/4），并在 set/get_framerate 中对
+SBGGR8 做 `clkrc<<1`/`clkrc>>1` —— 驱动模型里 RAW 的 PCLK 有效频率即
+fINT/2。另：该驱动注释记录 datasheet 声称 clkrc=0 时 XCLK 除 1，但实测
+（示波器）是除 2 —— 芯片存在 datasheet 未记载的行为偏差，与本次 2 PCLK/byte
+疑点同理，属"实测为准"的佐证。
+
+**结论（修正后）**：2 PCLK/byte 是**实测现象**（8 组配置 dup_even=1.000 +
+RGB565 路径对照排除采样链缺陷）。**判定性实验已完成**（'C' 命令 + SM2 PIO
+计数器，2026-08-14 直接计数）：shipped 配置 **1280 边沿/行**（见 §6.4
+末 + §10.5）——"1280 PCLK/行"从推断变为直接测量，2 PCLK/byte 成立；
+datasheet 的 640 PCLK/行时序仅适用于官方缩放配置（其输出行也只有 320 个
+不同字节，见 §10.5 第 8 组 B），两种配置下每字节都保持 2 PCLK → **与寄存器
+配置无关**。
 
 ### 6.4 判别实验：空间相关签名（决定性证据）
 
@@ -291,7 +312,7 @@ PIO 程序改为**每 2 个 PCLK 上升沿采样一次**（camera.pio 6 指令�
 
 ### 6.6 为什么寄存器值保持"best-known"而不是 revert
 
-7 组配置都无效说明这些寄存器**既不致病也不治病**；但保持当前值
+8 组配置都无效说明这些寄存器**既不致病也不治病**；但保持当前值
 （缩放旁路、与 RGB565 路径一致）能保证两条路径行为一致，且
 test_01 回读断言它们——任何未来改动必须同步更新测试。
 
@@ -491,9 +512,11 @@ python3 bayer_demosaic.py in.raw --width 640 --height 240 --nearest -o out.bmp
 
 ### 10.1 最终硬件验证（2026-08-14）
 
-- 全量：`Ran 49 tests` OK（45 纯软件 + 4 hw_bayer），4 hw_integration skip。
-- `test_hw_bayer -v`：**4/4 PASS**（test_01 寄存器回读、test_02 帧统计
-  nz>50% + >100 种取值、test_03 dup_even<0.9、test_04 缝合+BMP）。
+- 全量：`Ran 50 tests` OK（45 纯软件 + 5 hw_bayer），hw_integration 类
+  整类 skip（板上为 raw bayer 固件，COM7=0x01 探针，预期 1 条类级 skip）。
+- `test_hw_bayer -v`（shipped 固件）：**5/5 PASS**（test_01 寄存器回读、
+  test_02 帧统计 nz>50% + >100 种取值、test_03 dup_even<0.9、test_04
+  缝合+BMP、test_05 'C' PCLK 边沿计数）。
 
 ### 10.2 采集统计（bayer_out/stats.json，修复后实采）
 
@@ -514,7 +537,8 @@ python3 bayer_demosaic.py in.raw --width 640 --height 240 --nearest -o out.bmp
 2. 640 宽 colLag2=0.426 >> colLag1=0.146（Bayer 结构完整，假设 B 成立）；
 3. 320 重塑无签名（假设 A 证伪，FRAME_W=640 保持）；
 4. 跨帧相关更稳定（upper 0.29→0.66，lower 0.44→0.87）；
-5. 7 组寄存器配置全无效（非寄存器问题）。
+5. 8 组寄存器配置全无效（非寄存器问题）；'C' 直测 1280 边沿/行（shipped）
+   vs 640 边沿/行（official，但仅 320 不同字节/行）——2 PCLK/byte 与配置无关。
 
 ### 10.4 提交记录（exp/raw-bayer）
 
@@ -522,6 +546,33 @@ python3 bayer_demosaic.py in.raw --width 640 --height 240 --nearest -o out.bmp
 |---|---|
 | `cda8080` | fix(bayer): every-2nd-PCLK sampling 消除水平 2x 重复（dup_even 1.0→0.385）+ 全部注释/文档核对为确认结论 |
 | `ec632ff` | docs(plan): T7 commit 步骤标记完成 |
+
+### 10.5 'C' 直接测量 + 第 8 组 A/B（2026-08-14 决定性验证）
+
+**背景**：§6.3 判定性实验（'C' 命令 SM2 PIO 计数每 HREF 行 PCLK 上升沿）
+完成，将 "1280 PCLK/行" 从推断变为**直接测量**；同时用官方 Table 2-2
+Sheet 3 寄存器表（`-DRAW_BAYER_OFFICIAL_REGS`）做第 8 组 A/B，检验
+2 PCLK/byte 是否与寄存器配置无关。
+
+| 测量（4 行取一致） | shipped（当前表） | official（Table 2-2 Sheet 3） |
+|---|---|---|
+| 'C' 边沿/行 | **1280**（=0xFFFFFF00） | **640**（=0xFFFFFF80） |
+| per-PCLK 采样 dup_even | —（shipped 用 every-2nd） | **1.000**（240/240 行） |
+| 每行不同字节数 | 640 | **320**（唯一值 median 62，min 40 max 93） |
+| 帧完整性 | 640×240 153600 B | 640×240 153600 B（仍完整） |
+
+- **official 配置下 'C'=640 边沿/行与 datasheet Table 3-3 吻合**，但
+  per-PCLK 采样后每行**只有 320 个不同字节**（DCWCTR=0x11 HDS by 2 +
+  XSC/YSC 缩放使行内不同字节减半）→ 640 边沿只承载 320 个不同字节，
+  每个字节仍保持 2 PCLK（colLag2=14.272 ≈ 2×colLag1=7.125 重复指纹）。
+- **结论**：2 PCLK/byte 与寄存器配置**无关**（8 组配置全验证）；
+  datasheet 的 640 PCLK/行时序仅适用于官方缩放配置，且该配置输出行
+  也只有 320 个不同字节。**shipped 配置 + every-2nd-PCLK 采样是全分辨率
+  （640 不同字节/行）唯一路径**，§6.5 修复保持正确。
+- 配套：`test_05` 把 640/1280 边沿数断言进硬件测试（±3 同步竞态）；
+  test_01 按 CLKRC 回读 0x01 自动选 official 期望表；`rpipico_official`
+  env 中 test_03 **预期失败**（dup_even=1.000 ≥ 0.9，per-PCLK 下官方配置
+  本来就重复——见 test/README.md）。
 
 ---
 

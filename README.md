@@ -102,6 +102,13 @@ VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切�
   `--out`（默认 `bayer_frames/`）、`--pairs`（上/下帧对数，默认 3）、`--pattern`
   （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 640×480 BMP）。
 - **固件开关**（`platformio.ini`）：`-DRAW_BAYER -DFRAME_W=640 -DFRAME_H=240`。
+  - 默认 `[env:rpipico]` = shipped 表 + PIO 每 2nd PCLK 采样（T7 修复，
+    全分辨率 640 不同字节/行，test 5/5）。
+  - `[env:rpipico_official]` = 官方 Table 2-2 Sheet 3 寄存器表
+    （`-DRAW_BAYER_OFFICIAL_REGS`）+ per-PCLK 采样（`-DRAW_BAYER_PER_PCLK`）——
+    第 8 组 A/B 诊断 env：'C' 直测 640 边沿/行但仅 320 不同字节/行，
+    证实 2 PCLK/byte 与寄存器配置无关（详见 `docs/RAW_BAYER_OPERATION_MATH.md`
+    §10.5）；该 env 下 `test_03` 预期失败（dup_even=1.000）。
 - ⚠️ `capture.py`/`live_view.py` 是 RGB565（CAM1）专用，**未适配 raw bayer**；
   `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
 
