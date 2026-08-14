@@ -450,21 +450,43 @@ int ov7670_init_raw_bayer(void) {
   sleep_ms(10);
   ov7670_write_list(OV7670_raw_bayer_regs);
 
-  sleep_ms(300); // tS:REG settling (~10 frames)
+  // tS:REG settling (~10 frames): let AGC/AEC converge on the scene first,
+  // THEN freeze them. The upper/lower half-frames are captured seconds apart
+  // as two independent acquisitions; with auto-exposure still enabled (COM8
+  // reset default 0xE7 = FASTAEC|AECSTEP|BANDING|AGC|AEC|AWB) the AGC engine
+  // keeps re-converging between the two, producing a brightness jump at the
+  // stitch seam (measured seam row diff up to 128/255 on live data). Clearing
+  // COM8 bits 2/1 (AGC+AEC) leaves 0xE1 (FASTAEC|AECSTEP|BANDING|AWB): the
+  // GAIN/AECH registers are driven by the auto-exposure engine and are
+  // read-only while it runs, so disabling AGC+AEC freezes them at the values
+  // converged above — both halves then share one locked exposure. AWB is kept
+  // on (raw Bayer output already bypasses most color processing; AWB only
+  // nudges R/B gains and does not cause the seam brightness jump).
+  ov7670_write_reg(OV7670_REG_COM8, 0xE1);
+
+  sleep_ms(100); // register settle after the lock write
   return 0;
 }
 
 // Window math (datasheet): VSTRT=(VSTART<<2)|VREF[1:0]; VSTOP=(VSTOP<<2)|VREF[3:2].
-// Pinned values:
-//   upper: VSTART=0x03,VSTOP=0x3F,VREF[3:0]=0x3 -> rows 15..252
-//   lower: VSTART=0x3F,VSTOP=0x7B,VREF[3:0]=0x0 -> rows 252..492
+// MEASURED (2026-08-14): VSTOP is EXCLUSIVE — a window (VSTRT,VSTOP) delivers
+// rows VSTRT..VSTOP-1. With the old upper VREF[3:0]=0x3 (VSTOP_eff=252) the
+// upper frame delivered only 237 valid rows (15..251); capture rows 237..239
+// were the NEXT frame's top rows (wrap-around, corr 0.76-0.85 to upper[0..2]),
+// NOT the assumed "overlap 252..254" — that is the root cause of the bright
+// stitch seam (blending bright wrap rows into the dark lower window).
+// Pinned values (corrected):
+//   upper: VSTART=0x03,VSTOP=0x3F,VREF[3:0]=0xF -> rows 15..254 (240 rows,
+//          REAL 3-row overlap 252..254 with lower; VSTOP_eff=252|3=255)
+//   lower: VSTART=0x3F,VSTOP=0x7B,VREF[3:0]=0x0 -> rows 252..491 (240 rows,
+//          exact fit, no wrap)
 // TSLB[0]=0 MUST be written before any window-register write.
 int ov7670_set_bayer_window(uint8_t half) {
   uint8_t vstart, vstop, vref_lo;
   if (half == OV7670_BAYER_WINDOW_UPPER) {
     vstart = 0x03;
     vstop = 0x3f;
-    vref_lo = 0x03;
+    vref_lo = 0x0f;  // VSTOP_eff=255 -> rows 15..254 (240 rows, real 252..254 overlap)
   } else if (half == OV7670_BAYER_WINDOW_LOWER) {
     vstart = 0x3f;
     vstop = 0x7b;

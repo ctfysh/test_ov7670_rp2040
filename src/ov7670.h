@@ -142,15 +142,17 @@ uint8_t ov7670_bus_levels(void);
 // Returns 0 on success.
 int ov7670_init(void);
 
-// Bayer half-window selectors (ov7670_set_bayer_window)
-#define OV7670_BAYER_WINDOW_UPPER 0 // rows 15..252
-#define OV7670_BAYER_WINDOW_LOWER 1 // rows 252..492
+// Bayer half-window selectors (ov7670_set_bayer_window).
+// VSTOP is exclusive (measured): upper window VSTOP_eff=255 -> rows 15..254,
+// lower rows 252..491 -> real 3-row overlap (252..254) between the halves.
+#define OV7670_BAYER_WINDOW_UPPER 0 // rows 15..254
+#define OV7670_BAYER_WINDOW_LOWER 1 // rows 252..491
 
 // Full bring-up: reset, raw Bayer VGA 640x480 8-bit (Table 2-2 + COM7=0x01).
 // Returns 0 on success.
 int ov7670_init_raw_bayer(void);
 
-// Switch vertical capture window: upper (rows 15..252) or lower (252..492).
+// Switch vertical capture window: upper (rows 15..254) or lower (252..491).
 // Returns 0 on success, -1 on invalid half or SCCB failure.
 int ov7670_set_bayer_window(uint8_t half);
 
