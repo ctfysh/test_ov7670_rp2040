@@ -191,8 +191,15 @@ $$HSTOP = (0x18 << 3)\ |\ HREF[5:3]$$
 | 窗口 | VSTRT | VSTOP | 0x19 | 0x1A | VREF 低半字节 |
 |---|---|---|---|---|---|
 | 全窗 VGA | 15 | 492 | 0x03 | 0x7B | 0x03 |
-| 上半 | 15 | 252 | 0x03 | 0x3F | 0x03 |
+| 上半 | 15 | 255 | 0x03 | 0x3F | 0x0F |
 | 下半 | 252 | 492 | 0x3F | 0x7B | 0x00 |
+
+> **VSTOP 排他语义（2026-08-14 实测）**：窗口 (VSTRT, VSTOP) 实际输出
+> 行 VSTRT..VSTOP-1。旧上窗 VREF[3:0]=0x3（VSTOP_eff=252）只交付 237 行
+> （15..251），捕获的第 237..239 行是**下一帧顶部行回绕**（corr 0.76–0.85
+> 对上窗前 3 行），并非设计假设的"重叠 252..254"——这是亮度缝的根因
+> （亮回绕行被混进暗下窗的 seam）。修复：上窗 VREF[3:0]=0x0F →
+> VSTOP_eff=255 → 行 15..254（240 行），与下窗形成真实 3 行重叠（252..254）。
 
 **VREF 读改写**：保留 bits[7:4]（AGC 增益高位）：
 
@@ -203,7 +210,87 @@ $$VREF_{\text{new}} = (VREF_{\text{read}} \ \&\ 0xF0)\ |\ VREF_{\text{lo}}$$
 ### 5.3 已知伪影
 
 上窗行 15..254、下窗行 252..491 → **3 行重叠（252..254）**，是窗口寄存器
-方案的已知伪影；逐半统计才是验证杠杆，缝合不去重（`stitch_halves` 纯 vstack）。
+方案的已知伪影；重叠行在两半帧中内容一致（曝光已锁定），vstack 不去重、
+重叠行重复一次为已知伪影；逐半统计才是验证杠杆（`stitch_halves` 纯 vstack）。
+
+### 5.4 旋转伪影（旧固件）与修复验证（2026-08-14）
+
+**旧固件症状**：v2 采集中 6/12 坏帧为**行级旋转**（+220/+39/+11 行循环移位，
+corr 0.75–0.95 vs shift-0 的 0.10–0.14）。坏帧行级字节对齐 corr~1.0 →
+真实行级旋转，非字节流伪影。
+
+**v2 环分析（推翻旧结论）**：v2 环 153/153 边沿 HREF=0、PC=4（SM 卡在
+autopush `in pins,8`）、FIFO=0（2-bit 编码，4 words 满回绕为 0）→ **v2 实际
+运行在 FULL-window 模式**：DMA 收满 240 行后传感器仍输出 477 行，SM 继续
+采样 → FIFO 满 → 停 autopush。此前"v2 是半窗口伪影"的结论**错误**，
+真实机制是**旧上窗数学 + 缺失 AGC/AEC 锁定**（见下）。
+
+**根因链**（修复于 §5.2 VSTOP 排他语义）：
+1. 旧上窗 VREF[3:2]=0b00 → VSTOP_eff=252 → 只交付 237 行（15..251）；
+2. 捕获 DMA 配额是 240 行 → 第 237..239 行 = **下一帧顶部 3 行回绕**
+   （corr 0.76–0.85 对上窗前 3 行）→ 亮度缝 + 行内容错位；
+3. AGC/AEC 在窗口切换后重新收敛 → 缝两侧曝光跳变
+   （修复前实测 upper R≈148.6 vs lower R≈42.1）。
+
+**修复**：上窗 VREF[3:2]=0b11 → VSTOP_eff=255 → 行 15..254（240 行，真实
+3 行重叠 252..254）；COM8=0xE1（AGC/AEC 冻结，300 ms 收敛后锁定）。
+
+**陈旧字机制**（已知、非缺陷）：DMA 完成后 SM 继续采样 → FIFO 满（4 words）
+→ 停 autopush；下次 arming 的 clear_fifos 使陈旧 4 B 先入 FIFO → 每帧首
+4 字节=陈旧字（first4=`00000000`），仍行对齐，行均值不可见。
+
+**修复验证（当前固件，设备寄存器实测）**：
+- `'R'` 回读确认已烧录：COM7=0x01、VREF=0x0F、VSTRT/VSTOP=0x03/0x3F、COM8=0xE1。
+- 全窗口 framesave_probe：**40/40 GOOD**（shift-0 corr 0.997–1.000）。
+- 半窗口 framesave_half：**40/40 GOOD**；vring_probe **12/12 GOOD**
+  （940 个 guard 边沿全部 HREF=0 → arming 从不发生在窗口中途 → 旋转
+  结构上不可能；PC=0 干净停靠与 PC=4 FIFO 满停滞两种状态都产出对齐帧）。
+- 端到端 `bayer_capture.py --pairs 3 --bmp`：3/3 对 OK，seam 重叠行 corr
+  0.908–0.947，3 张 640×480 BMP 有效。
+- 两模式累计 **92/92 GOOD**，旋转不再复现。
+
+### 5.4.1 旋转伪影 · 第二根因：VSYNC multi-fire 的 hblank 误武装（2026-08-14 晚）
+
+**新症状**：§5.4 修复后仍出现间歇性旋转坏帧（seam≈0、行级旋转 +K 行带
+WRAP，fr[r]≈ref[(r+off)%240]，off 逐帧漂移 +45..+89）。clean 态完全正常、
+multi-fire 态 100% 旋转 → 坏帧只在 VSYNC 线突发（multi-fire）期间出现。
+
+**'V' 环决定性证据（修订旧结论）**：旧结论"所有 arming 边沿 HREF=0/PC=0
+→ 对齐干净，旋转必来自传感器"是**错误的**——hblank（行间 13.6 µs HREF
+低电平）同样满足 HREF=0/PC=0，而 multi-fire 的杂散边沿就落在 hblank 里，
+恰好通过旧守卫 `!frame_ready && !dma_busy` → DMA 从窗口第 K 行起采 240
+行 → 旋转。'V' 环 1024 边沿 multi-fire 态 bursts>900（1024 边沿里近 900
+个独立突发），clean 态 bursts=1。
+
+**时序实测（'W'/'S' 波形包，50 ns/样本）**：
+- hblank = 13.6 µs（745/746 个 HREF-low run 完全一致）→ 旧守卫无法区分
+  hblank 与帧间隔；
+- 真实帧边沿（VSYNC 上升沿）位于 HREF-low 已持续 **700–800 µs** 处
+  （'S' 10/10 帧一致，min=700/median=701/max=800 µs）→ vblank 中段；
+- vsync 上升沿宽度 200 µs；帧周期 564 ticks@64 µs = 36.1 ms = 27.7 fps。
+
+**修复（vblank-gated arming，`VBLANK_GATE_US=512`）**：`vsync_isr` 增加
+HREF 下降沿 IRQ 记录 `last_href_fall_us`；VSYNC 上升沿只有满足
+`HREF-low >= 512 µs` 才允许武装 DMA（ring bit7 = guard && vblank_ok）。
+阈值安全窗：高于 hblank 38×、低于真实边沿最小 elapsed（700 µs）1.37×。
+hblank（13.6 µs）与行有效（HREF=1）永不通过；真实帧边沿（700–800 µs）
+恒通过。**vblank 内任意时刻武装都安全**：窗口首行尚未开始，捕获 SM 的
+`wait 1 gpio 17` 电平等待保证从窗口第 1 行起采。
+
+**修复验证（当前固件，multi-fire 最坏态）**：
+- **'V' 环不变量 PASS**：575/575 arming 边沿全部 HREF=0（vblank 内）；
+  multi-fire 态（bursts=1023/1024、gaps>500=909）下 ring 仍然全绿 →
+  中途武装结构上不可能。
+- **seam 回归**：U1[-3:]~L1[:3] = **+0.984**（4 组合全 0.983–0.984，
+  优于旧固件 clean 态 +0.89）。
+- **wrap 测试**：u1/u2 row0~row239 corr = 0.22–0.24（无旋转）。
+- **与修复前同场景对照**：fresh vs 17:00 修复前已知 GOOD 帧
+  （`exp_clean/u1.npy`）off=0 corr 0.963/0.784 → 对齐完全保留。
+- **'H' 行为**：`lines/frame` 用 RAW vsync 边沿计数（armed 计数因 1 s
+  忙等窗口阻塞 loop() 而不可用——窗口内 loop() 不消费帧 → 守卫常闭 →
+  实测 armed≈1）。multi-fire 期 lines/frame 读数偏低（<477）即垂直
+  时序不稳信号；ring bit7 独立证明这些边沿从未中途武装 → 无旋转。
+- 自洽：U1~U2=0.973、L1~L2=0.972（同窗口帧间一致）。
 
 ---
 

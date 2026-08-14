@@ -11,6 +11,8 @@
 frames/
 bayer_out/
 bayer_out_fixed/
+bayer_out_prefix/
+bayer_verify/
 __pycache__/
 *.pyc
 
