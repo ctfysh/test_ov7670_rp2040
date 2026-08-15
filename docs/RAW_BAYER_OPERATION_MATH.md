@@ -46,6 +46,8 @@
 | 修复 | PIO 程序**每 2 个 PCLK 上升沿采样一次**（camera.pio 6 指令环） |
 | 效果 | `dup_even`：1.000 → **0.385**；Bayer 同面相关签名在 640 宽清晰（colLag2=0.426 >> colLag1=0.146） |
 | 结论 | **不是寄存器可修**——8 组寄存器配置实测均无效；FRAME_W=640 保持，无几何改动 |
+| 粉区缺陷 | 上窗楔形 x∈[502,516] 检查带（偶列飙 204–228 / 奇列塌 12–24），传感器缺陷非采集问题 |
+| 粉区修复 | `bayer_pipeline.py` 带外同相位参考 + 阈值 55：区域替换 430 像素、死点 111 个（§10.6） |
 
 ---
 
@@ -998,6 +1000,8 @@ python3 bayer_demosaic.py in.raw --width 640 --height 240 --nearest -o out.bmp
 |---|---|
 | `cda8080` | fix(bayer): every-2nd-PCLK sampling 消除水平 2x 重复（dup_even 1.0→0.385）+ 全部注释/文档核对为确认结论 |
 | `ec632ff` | docs(plan): T7 commit 步骤标记完成 |
+| `2eda11b` | docs(bayer): §7 real-data step-through walkthrough with reproducible examples |
+| `81c05d1` | feat(bayer): pipeline tool (bit-order decode + defect fix + render) with 13 locked tests |
 
 ### 10.5 'C' 直接测量 + 第 8 组 A/B（2026-08-14 决定性验证）
 
@@ -1025,6 +1029,44 @@ Sheet 3 寄存器表（`-DRAW_BAYER_OFFICIAL_REGS`）做第 8 组 A/B，检验
   test_01 按 CLKRC 回读 0x01 自动选 official 期望表；`rpipico_official`
   env 中 test_03 **预期失败**（dup_even=1.000 ≥ 0.9，per-PCLK 下官方配置
   本来就重复——见 test/README.md）。
+
+### 10.6 粉区缺陷取证与修复（2026-08-15，§7 数据源）
+
+**现象**：修复后渲染图上窗左侧出现粉红色竖带（R/G 偏高）。定位后确认为
+**传感器上窗缺陷区**（楔形 x∈[502,516]、y∈[60,160] 检查带），与采集/寄存器
+配置无关：
+
+| 位置 | 原始值（y=100 行） | 修复后 |
+|---|---|---|
+| 偶列（x=504/506/…） | 飙高 204–228 | 140（参考均值） |
+| 奇列（x=503/505/…） | 塌陷 12–24 | 186（参考均值） |
+| 边缘列 x=503 / x=515 | 236 / 212（差<55 未替换） | 保持（已知残留） |
+
+**根因**：偶列爆点 / 奇列塌点同时出现在同一行——同色参考对比才可分辨
+（R/G/B 通道均值在缺陷带内 R/G=1.11 vs 邻区 ~1.03，红偏约 7%）。
+
+**修复算法**（`bayer_pipeline.py`）：
+
+- **区域修复** `fix_defect_region`：逐像素 `|cfa[y,x] − ref| > 55` 才替换，
+  ref = 缺陷带外（x≤501 或 x≥517）**同相位**参考均值（±2 步进跳过缺陷列）。
+  缺陷区 715 像素中替换 **430 个**、保留 285 个（含 2 条边缘残留列）。
+- **死点修复** `fix_dead_pixels`：同色 4-邻域中值，阈值 60，`skip=` 区域修复
+  掩码；全帧替换 **111 个**死点（阈值扫描 40→331 / 45→283 / 50→238 /
+  55→174 / 60→111，60 为最终档）。
+
+**验证**（`test/test_bayer_pipeline.py` 13 用例锁定）：
+
+1. 新函数 vs 原始 v8 逻辑：区域掩码逐像素一致（orig=430 = new=430，0 差异）；
+2. 替换值 == 带外同相位参考均值（逐点重建 0/430 失配）；
+3. CLI 复现 `final_v8_precise.png`：全图 mean diff=0.0717、29683 px ±1 舍入微差、
+   >3 仅 766 px（0.25%，死点参数微差，视觉不可辨）。
+
+**一键复现**：
+
+```bash
+python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o bayer_verify/final_v8_precise_repro.png
+# 输出: region_replaced=430, dead_replaced=111 → 与交付版 final_v8_precise.png 一致
+```
 
 ---
 
@@ -1068,7 +1110,8 @@ src/ov7670.c/.h                    OV7670 驱动 + 窗口切换
 src/main.cpp                       CAM2 协议 + 'T'/'R' 诊断
 bayer_capture.py                   采集 CLI + 纯函数层
 bayer_demosaic.py                  去马赛克 + BMP
-test/                              纯软件 + 硬件测试
+bayer_pipeline.py                  取证管线（位序解码 + 区域/死点修复 + 分相位渲染，§10.6）
+test/                              纯软件 + 硬件测试（test_bayer_pipeline.py 13 用例锁定 §10.6）
 bayer_out/                         实采证据（raw + BMP + stats.json）
 ```
 
@@ -1107,4 +1150,12 @@ def pear(a, b):
     am, bm = a - a.mean(), b - b.mean()
     return (am * bm).sum() / np.sqrt((am * am).sum() * (bm * bm).sum())
 print(round(pear(u1[-3:].ravel(), l1[:3].ravel()), 4))  # +0.9489
+```
+
+**§10.6 粉区缺陷修复复现**（bayer_pipeline.py，独立 CLI）：
+
+```bash
+# 需 640×480 拼合后的完整 raw（upper_000.raw + lower_000.raw 已拼好时可直接用）
+python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o /tmp/repro.png
+# 期望输出: region_replaced=430, dead_replaced=111 → 与 final_v8_precise.png 一致
 ```

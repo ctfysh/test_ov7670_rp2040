@@ -7,6 +7,7 @@
 | 纯软件数学验证 | `test_pipeline_math.py` | 否（CI 可跑） | 帧协议解析 → RGB565 位提取/扩展 → BMP 呈现的数学正确性 |
 | 纯软件数学验证 | `test_bayer_math.py` | 否（CI 可跑） | 拜耳去马赛克数学（Layers F/G/H）：RGGB 提取/近邻插值/BMP |
 | 纯软件数学验证 | `test_bayer_capture.py` | 否（CI 可跑） | CAM2 帧封装/滑窗解析/缝合/窗口编码/CFA 均值（Layers I/J/K） |
+| 纯软件数学验证 | `test_bayer_pipeline.py` | 否（CI 可跑） | 取证管线（§10.6）：位序解码 g_map / 区域缺陷修复 / 死点修复 / 分相位渲染（13 用例） |
 | 硬件集成验证 | `test_hw_integration.py` | 是（真机） | 真机上寄存器回读 / CAM1 帧流 / PIO 波形 / 帧率量级（RGB565 固件） |
 | 硬件集成验证 | `test_hw_bayer.py` | 是（真机） | 真机上寄存器回读 / CAM2 帧流 / CFA 分离 / 缝合+去马赛克（raw bayer 固件） |
 
@@ -112,4 +113,4 @@ pio run -e rpipico -t upload --upload-port /dev/cu.usbmodemXXXX
 - `test_hw_bayer.py`：COM7≠0x01（非 raw bayer 固件）→ 整类 skip（CAM2 断言不适用）
 
 探针失败（无 DBG1 回复、marker 不符）同样 skip —— 类级 setup 永不 fail。
-无板时两个文件均整类 skip（49 纯软件用例照常通过）。
+无板时两个文件均整类 skip（58 纯软件用例照常通过）。

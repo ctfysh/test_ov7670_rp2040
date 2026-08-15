@@ -114,6 +114,13 @@ VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切�
   拼接成 **640×480 完整画面**显示（灰度默认 / `--demosaic` 彩色），
   无信号超时 2s 显示白色 NO-SIGNAL 屏；`capture.py` 仍为 RGB565（CAM1）专用。
   `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
+- ✅ **取证管线 `bayer_pipeline.py`**（§10.6）：上窗楔形缺陷区（x 502–516）取证
+  与修复——位序解码 → 区域/死点缺陷修复 → 分相位渲染 → CLI 落盘。与交付版
+  `final_v8_precise.png` 一致（region_replaced=430），13 个测试锁定：
+  ```bash
+  python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o out.png
+  # 期望: region_replaced=430, dead_replaced=111
+  ```
 
 ## 构建与烧录
 
@@ -203,6 +210,9 @@ python3 live_view.py --demosaic --frames 6
 ├── real_product.jpg        # 成品实物图
 ├── capture.py          # 单帧捕获 → BMP
 ├── live_view.py        # 实时查看器（numpy + pygame；CAM1 RGB565 + CAM2 raw bayer）
+├── bayer_capture.py    # raw bayer 采集 CLI + 纯函数层（缝合/窗口编码/CFA 均值）
+├── bayer_demosaic.py   # 拜耳去马赛克 + BMP
+├── bayer_pipeline.py   # 取证管线（位序解码 + 区域/死点缺陷修复 + 分相位渲染，§10.6）
 ├── verify_frame.py     # 帧数据校验工具
 ├── docs/
 │   ├── OV7670_RP2040_REFERENCE.md
