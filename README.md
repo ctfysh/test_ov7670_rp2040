@@ -121,6 +121,14 @@ VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切�
   python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o out.png
   # 期望: region_replaced=430, dead_replaced=111
   ```
+- ✅ **R 版管线 `bayer_pipeline.R`**（§10.6）：与 Python 版逐像素等价的全链路重现
+  （位序解码/区域/死点修复/分相位渲染/CLI 参数一致），仅依赖 R base + `png` 包：
+  ```bash
+  Rscript bayer_pipeline.R bayer_verify/frame_000_640x480.raw -o out.png
+  # 期望: region_replaced=430, dead_replaced=111
+  ```
+  交叉验证：R vs Python 同参数复现 92.2 万像素中仅 40 像素差 ≤3（浮点舍入），
+  G 通道与无修复模式逐像素 0 差异。
 
 ## 构建与烧录
 
@@ -213,6 +221,7 @@ python3 live_view.py --demosaic --frames 6
 ├── bayer_capture.py    # raw bayer 采集 CLI + 纯函数层（缝合/窗口编码/CFA 均值）
 ├── bayer_demosaic.py   # 拜耳去马赛克 + BMP
 ├── bayer_pipeline.py   # 取证管线（位序解码 + 区域/死点缺陷修复 + 分相位渲染，§10.6）
+├── bayer_pipeline.R    # 取证管线 R 版（与 Python 版逐像素等价，交叉验证 §10.6）
 ├── verify_frame.py     # 帧数据校验工具
 ├── docs/
 │   ├── OV7670_RP2040_REFERENCE.md

@@ -47,7 +47,7 @@
 | 效果 | `dup_even`：1.000 → **0.385**；Bayer 同面相关签名在 640 宽清晰（colLag2=0.426 >> colLag1=0.146） |
 | 结论 | **不是寄存器可修**——8 组寄存器配置实测均无效；FRAME_W=640 保持，无几何改动 |
 | 粉区缺陷 | 上窗楔形 x∈[502,516] 检查带（偶列飙 204–228 / 奇列塌 12–24），传感器缺陷非采集问题 |
-| 粉区修复 | `bayer_pipeline.py` 带外同相位参考 + 阈值 55：区域替换 430 像素、死点 111 个（§10.6） |
+| 粉区修复 | `bayer_pipeline.py` 带外同相位参考 + 阈值 55：区域替换 430 像素、死点 111 个（§10.6）；R 版 `bayer_pipeline.R` 逐像素等价 |
 
 ---
 
@@ -1061,11 +1061,26 @@ Sheet 3 寄存器表（`-DRAW_BAYER_OFFICIAL_REGS`）做第 8 组 A/B，检验
 3. CLI 复现 `final_v8_precise.png`：全图 mean diff=0.0717、29683 px ±1 舍入微差、
    >3 仅 766 px（0.25%，死点参数微差，视觉不可辨）。
 
+**R 版交叉验证**（`bayer_pipeline.R`，2026-08-16）：与 Python 版同参数全链路
+重现，逐像素对比 `final_v8_precise_R.png` vs Python 复现——
+
+| 对比 | 差异像素 | 最大差 |
+|---|---|---|
+| 完整管线（修复开） | 40 / 921600（0.004%） | 3 |
+| 无修复模式（`--no-region-fix --no-dead-fix`） | **0** | 0 |
+
+修复统计一致（region=430 / dead=111）；G 通道 0 差异；40 个差异像素全部在
+R/B 通道 ±1–3，为跨语言浮点舍入（`^0.85` 幂运算 libm 差异），零散无结构错误。
+
 **一键复现**：
 
 ```bash
 python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o bayer_verify/final_v8_precise_repro.png
 # 输出: region_replaced=430, dead_replaced=111 → 与交付版 final_v8_precise.png 一致
+
+# R 版（仅依赖 R base + png 包）
+Rscript bayer_pipeline.R bayer_verify/frame_000_640x480.raw -o bayer_verify/final_v8_precise_R.png
+# 输出: region_replaced=430, dead_replaced=111 → 与 Python 版逐像素等价
 ```
 
 ---
@@ -1111,6 +1126,7 @@ src/main.cpp                       CAM2 协议 + 'T'/'R' 诊断
 bayer_capture.py                   采集 CLI + 纯函数层
 bayer_demosaic.py                  去马赛克 + BMP
 bayer_pipeline.py                  取证管线（位序解码 + 区域/死点修复 + 分相位渲染，§10.6）
+bayer_pipeline.R                   取证管线 R 版（与 Python 版逐像素等价，§10.6 交叉验证）
 test/                              纯软件 + 硬件测试（test_bayer_pipeline.py 13 用例锁定 §10.6）
 bayer_out/                         实采证据（raw + BMP + stats.json）
 ```
@@ -1158,4 +1174,8 @@ print(round(pear(u1[-3:].ravel(), l1[:3].ravel()), 4))  # +0.9489
 # 需 640×480 拼合后的完整 raw（upper_000.raw + lower_000.raw 已拼好时可直接用）
 python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o /tmp/repro.png
 # 期望输出: region_replaced=430, dead_replaced=111 → 与 final_v8_precise.png 一致
+
+# R 版等价命令（Rscript + png 包）
+Rscript bayer_pipeline.R bayer_verify/frame_000_640x480.raw -o /tmp/repro_R.png
+# 期望输出: region_replaced=430, dead_replaced=111 → 与 Python 版逐像素等价
 ```
