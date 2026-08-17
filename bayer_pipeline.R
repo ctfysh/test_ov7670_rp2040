@@ -120,10 +120,19 @@ render <- function(cfa, pattern = "RGGB", r_gain = NULL, b_gain = NULL,
     floor(img)
 }
 
+fix_leading_zeros <- function(cfa) {
+    h <- nrow(cfa)
+    w <- ncol(cfa)
+    if (w < 4) return(cfa)
+    cfa[, 1] <- cfa[, 3]
+    cfa[, 2] <- cfa[, 4]
+    cfa
+}
+
 pipeline <- function(raw, dead_threshold = 60.0, fix_dead = TRUE,
                      pattern = "RGGB",
                      r_gain = NULL, b_gain = NULL, gamma = 0.85, b_extra = 0.93) {
-    cfa <- raw + 0.0
+    cfa <- fix_leading_zeros(raw + 0.0)
     stats <- list()
     if (fix_dead) {
         res <- fix_dead_pixels(cfa, dead_threshold)

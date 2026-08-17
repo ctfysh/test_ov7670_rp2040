@@ -67,6 +67,8 @@ def decode_bayer(raw, w, h, demosaic=False, pattern="RGGB"):
     demosaic=True:  bilinear demosaic via bayer_demosaic (color preview).
     """
     cfa = np.frombuffer(raw, dtype=np.uint8).reshape(h, w)
+    cfa[:, 0] = cfa[:, 2]
+    cfa[:, 1] = cfa[:, 3]
     if not demosaic:
         return np.dstack([cfa, cfa, cfa])
     import bayer_demosaic

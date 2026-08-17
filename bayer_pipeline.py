@@ -115,10 +115,23 @@ def render(cfa, pattern="RGGB", r_gain=None, b_gain=None, gamma=0.85, b_extra=0.
     return img.astype(np.uint8)
 
 
+def fix_leading_zeros(cfa):
+    """修复每行前2个零字节 (Bayer pipeline delay): 用第2列数据填充前2列。
+
+    OV7670 raw 模式每行前2字节始终为零 (传感器 pipeline delay)，
+    不处理会导致图像横向拉伸 + 零值污染 demosaic/WB。
+    返回修复后的副本 (原矩阵不变)。
+    """
+    cfa = cfa.copy()
+    cfa[:, 0] = cfa[:, 2]
+    cfa[:, 1] = cfa[:, 3]
+    return cfa
+
+
 def pipeline(raw, dead_threshold=60.0, fix_dead=True, pattern="RGGB",
              r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
-    """240x320 raw Bayer -> RGB: 散点死点修复 -> 去马赛克 -> WB -> 伽马。"""
-    cfa = raw.astype(np.float64)
+    """240x320 raw Bayer -> RGB: 修复零列 -> 散点死点修复 -> 去马赛克 -> WB -> 伽马。"""
+    cfa = fix_leading_zeros(raw.astype(np.float64))
     stats = {}
     if fix_dead:
         cfa, stats["dead_replaced"] = fix_dead_pixels(cfa, dead_threshold)
