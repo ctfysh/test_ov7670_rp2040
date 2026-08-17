@@ -102,28 +102,21 @@ USB CDC (Serial) ◀── loop() 发送 "CAM1" + W/H + RGB565 ◀─┘
   `--out`（默认 `bayer_frames/`）、`--frames`（采集帧数，默认 3）、`--pattern`
   （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 320×240 BMP）。
 - **固件构建**（`platformio.ini`）：
-  - 默认 `[env:rpipico]` = 官方 Table 2-2 寄存存表 + every-2nd-PCLK 采样
-    （`-DRAW_BAYER_OFFICIAL_REGS`）。每行捕获320字节，正确匹配320像素宽。
-  - `[env:rpipico_legacy]` = shipped 表 + PIO 每 2nd PCLK 采样（T7 修复）。
+  - 默认 `[env:rpipico]` = 官方 Table 2-2 寄存器表 + every-2nd-PCLK 采样
+    （`-DRAW_BAYER_OFFICIAL_REGS`）。每行捕获 320 字节，正确匹配 320 像素宽。
+  - `[env:rpipico_legacy]` = shipped 表 + every-2nd-PCLK（T7 修复）。
+  - 构建标志：`-DRAW_BAYER -DRAW_BAYER_OFFICIAL_REGS`
 - ✅ `live_view.py` 已适配 raw bayer（CAM2）：直接显示 320×240 帧
-  （灰度默认 / `--demosaic` 彩色），
-  无信号超时 2s 显示白色 NO-SIGNAL 屏；`capture.py` 仍为 RGB565（CAM1）专用。
-  `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
-- ✅ **取证管线 `bayer_pipeline.py`**（§10.6）：上窗楔形缺陷区（x 502–516）取证
-  与修复——位序解码 → 区域/死点缺陷修复 → 分相位渲染 → CLI 落盘。13 个测试锁定：
+  （灰度默认 / `--demosaic` 彩色），支持 `--port`/`--scale`/`--rotate` 命名参数。
+  无信号超时 2s 显示白色 NO-SIGNAL 屏。
+- ✅ **取证管线 `bayer_pipeline.py`**：320×240 raw Bayer → 死点修复 → 去马赛克 → WB → 伽马。
   ```bash
-  # 以下示例使用遗留 640×480 测试数据; 当前默认构建输出 320×240
-  python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o out.png
-  # 期望: region_replaced=430, dead_replaced=111
+  python3 bayer_pipeline.py experiments/raw_data/frame_000_320x240.raw -o out.png
   ```
-- ✅ **R 版管线 `bayer_pipeline.R`**（§10.6）：与 Python 版逐像素等价的全链路重现
-  （位序解码/区域/死点修复/分相位渲染/CLI 参数一致），仅依赖 R base + `png` 包：
+- ✅ **R 版管线 `bayer_pipeline.R`**：与 Python 版逐像素等价，仅依赖 R base + `png` 包。
   ```bash
-  Rscript bayer_pipeline.R bayer_verify/frame_000_640x480.raw -o out.png
-  # 期望: region_replaced=430, dead_replaced=111
+  Rscript bayer_pipeline.R experiments/raw_data/frame_000_320x240.raw -o out.png
   ```
-  交叉验证：R vs Python 同参数复现 92.2 万像素中仅 40 像素差 ≤3（浮点舍入），
-  G 通道与无修复模式逐像素 0 差异。
 
 ## 构建与烧录
 
@@ -168,12 +161,13 @@ python3 capture.py /dev/cu.usbmodem141101 frames 10
 ### 实时查看
 
 ```bash
-python3 live_view.py [port] [scale] [rotate] [--demosaic] [--frames N]
-# 例：2 倍放大 + 向左旋转 90°（默认）
-python3 live_view.py            # port=自动探测, scale=2, rotate=90
-python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
-# raw bayer 固件（CAM2）：直接显示 320×240，--demosaic 彩色，--frames 6 退出
-python3 live_view.py --demosaic --frames 6
+python3 live_view.py [--port PORT] [--scale N] [--rotate DEG] [--demosaic] [--frames N]
+# 例：自动探测 port, 3 倍放大, 不旋转
+python3 live_view.py --scale 3 --rotate 0
+# 例：指定 port, 2 倍放大, 彩色显示
+python3 live_view.py --port /dev/cu.usbmodem141101 --scale 2 --demosaic
+# 位置参数仍然兼容
+python3 live_view.py /dev/cu.usbmodem141101 2 0
 ```
 
 按键：`S` 存当前帧（所见即所得 BMP），`Q`/`Esc` 退出。无信号时显示白屏。
@@ -213,8 +207,8 @@ python3 live_view.py --demosaic --frames 6
 ├── live_view.py        # 实时查看器（numpy + pygame；CAM1 RGB565 + CAM2 raw bayer）
 ├── bayer_capture.py    # raw bayer 采集 CLI + 纯函数层（CAM2 帧协议/CFA 均值）
 ├── bayer_demosaic.py   # 拜耳去马赛克 + BMP
-├── bayer_pipeline.py   # 取证管线（位序解码 + 区域/死点缺陷修复 + 分相位渲染，§10.6）
-├── bayer_pipeline.R    # 取证管线 R 版（与 Python 版逐像素等价，交叉验证 §10.6）
+├── bayer_pipeline.py   # 320x240 管线（死点修复 + 去马赛克 + WB + 伽马）
+├── bayer_pipeline.R    # R 版管线（与 Python 版逐像素等价）
 ├── verify_frame.py     # 帧数据校验工具
 ├── docs/
 │   ├── OV7670_RP2040_REFERENCE.md
