@@ -123,9 +123,13 @@ render <- function(cfa, pattern = "RGGB", r_gain = NULL, b_gain = NULL,
 fix_leading_zeros <- function(cfa) {
     h <- nrow(cfa)
     w <- ncol(cfa)
-    if (w < 4) return(cfa)
-    cfa[, 1] <- cfa[, 3]
-    cfa[, 2] <- cfa[, 4]
+    if (w < 2) return(cfa)
+    for (r in seq_len(h)) {
+        row <- cfa[r, ]
+        nz <- 1
+        while (nz <= w && row[nz] == 0) nz <- nz + 1
+        if (nz > 1 && nz <= w) cfa[r, 1:(nz - 1)] <- row[nz]
+    }
     cfa
 }
 

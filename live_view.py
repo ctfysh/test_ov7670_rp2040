@@ -66,9 +66,13 @@ def decode_bayer(raw, w, h, demosaic=False, pattern="RGGB"):
     demosaic=False: grayscale preview (each CFA cell shown as its raw value).
     demosaic=True:  bilinear demosaic via bayer_demosaic (color preview).
     """
-    cfa = np.frombuffer(raw, dtype=np.uint8).reshape(h, w)
-    cfa[:, 0] = cfa[:, 2]
-    cfa[:, 1] = cfa[:, 3]
+    cfa = np.frombuffer(raw, dtype=np.uint8).reshape(h, w).copy()
+    for r in range(h):
+        nz = 0
+        while nz < w and cfa[r, nz] == 0:
+            nz += 1
+        if nz > 0 and nz < w:
+            cfa[r, :nz] = cfa[r, nz]
     if not demosaic:
         return np.dstack([cfa, cfa, cfa])
     import bayer_demosaic

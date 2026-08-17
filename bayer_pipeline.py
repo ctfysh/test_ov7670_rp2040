@@ -116,15 +116,20 @@ def render(cfa, pattern="RGGB", r_gain=None, b_gain=None, gamma=0.85, b_extra=0.
 
 
 def fix_leading_zeros(cfa):
-    """修复每行前2个零字节 (Bayer pipeline delay): 用第2列数据填充前2列。
+    """Adaptive per-row leading-zero fix: replace N leading zeros with column N value.
 
-    OV7670 raw 模式每行前2字节始终为零 (传感器 pipeline delay)，
-    不处理会导致图像横向拉伸 + 零值污染 demosaic/WB。
-    返回修复后的副本 (原矩阵不变)。
+    COM14=0x00: 2 leading zeros on every row.
+    COM14=0x18 (PCLK_DIV gate): 6 leading zeros on even rows, 0 on odd rows.
+    Detects per-row zero count and replaces only what's needed.
     """
     cfa = cfa.copy()
-    cfa[:, 0] = cfa[:, 2]
-    cfa[:, 1] = cfa[:, 3]
+    for r in range(cfa.shape[0]):
+        row = cfa[r]
+        nz = 0
+        while nz < len(row) and row[nz] == 0:
+            nz += 1
+        if nz > 0 and nz < len(row):
+            cfa[r, :nz] = row[nz]
     return cfa
 
 
