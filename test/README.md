@@ -6,10 +6,10 @@
 |----|------|-----------|---------|
 | 纯软件数学验证 | `test_pipeline_math.py` | 否（CI 可跑） | 帧协议解析 → RGB565 位提取/扩展 → BMP 呈现的数学正确性 |
 | 纯软件数学验证 | `test_bayer_math.py` | 否（CI 可跑） | 拜耳去马赛克数学（Layers F/G/H）：RGGB 提取/近邻插值/BMP |
-| 纯软件数学验证 | `test_bayer_capture.py` | 否（CI 可跑） | CAM2 帧封装/滑窗解析/缝合/窗口编码/CFA 均值（Layers I/J/K） |
+| 纯软件数学验证 | `test_bayer_capture.py` | 否（CI 可跑） | CAM2 帧封装/滑窗解析/CFA 均值（Layers J/K） |
 | 纯软件数学验证 | `test_bayer_pipeline.py` | 否（CI 可跑） | 取证管线（§10.6）：位序解码 g_map / 区域缺陷修复 / 死点修复 / 分相位渲染（13 用例） |
 | 硬件集成验证 | `test_hw_integration.py` | 是（真机） | 真机上寄存器回读 / CAM1 帧流 / PIO 波形 / 帧率量级（RGB565 固件） |
-| 硬件集成验证 | `test_hw_bayer.py` | 是（真机） | 真机上寄存器回读 / CAM2 帧流 / CFA 分离 / 缝合+去马赛克（raw bayer 固件） |
+| 硬件集成验证 | `test_hw_bayer.py` | 是（真机） | 真机上寄存器回读 / CAM2 帧流 / CFA 分离 / 去马赛克+BMP（raw bayer 固件） |
 
 ## 快速开始
 
@@ -79,19 +79,17 @@ pio run -e rpipico -t upload --upload-port /dev/cu.usbmodemXXXX
 
 1. **`test_01_reg_readback_raw_bayer_mode`**：`'R'` 回读 24 寄存器，关键位证明
    raw bayer 模式 — COM7(0x12)=0x01（sensor raw）、COM15(0x40)=0xC0（shipped）/
-   0xD0（official）、PID=0x76；
-   **必须先于任何 `'T'` 运行**（断言的是 init 后全窗值 VSTART=0x03/VSTOP=0x7B）。
+   0xD0（official）、PID=0x76。
    双构建自动选择：CLKRC 回读 0x01 → official Table 2-2 构建
    （`-DRAW_BAYER_OFFICIAL_REGS`），断言 official 期望表；否则 shipped 表。
-2. **`test_02_cam2_frame_stats`**：`'T'` upper → ack（DBG1+0xF9+0x00）；CAM2 帧头
+2. **`test_02_cam2_frame_stats`**：CAM2 帧头
    320×240、载荷完整 76800 B（1 byte/px）、统计特征 = 真实图像
-3. **`test_03_no_horizontal_duplication`**：上/下半帧偶数/奇数列逐位相等率 < 0.9
+3. **`test_03_no_horizontal_duplication`**：单帧偶数/奇数列逐位相等率 < 0.9
    —— 官方 Table 2-2 寄存器 + per-PCLK 采样下, DCWCTR=0x11 HDS×2 产生 320 个
    不同字节/行, per-PCLK 采样各取一次无重复; legacy shipped 构建 (every-2nd-PCLK)
    在 640×480 下有 dup_issue (T7, 2026-08-14), 但在 320×240 下不适用。
-   采集结果缓存供 test_04 复用。
-4. **`test_04_stitch_demosaic_bmp`**：`stitch_halves` → (480,320)、`demosaic_bayer` →
-   RGB uint8、`rgb_to_bmp` 头/尺寸公式（54 + 行填充对齐后 480 行）、落盘字节与内存一致
+4. **`test_04_demosaic_bmp`**：单帧 `demosaic_bayer` →
+   RGB uint8、`rgb_to_bmp` 头/尺寸公式（54 + 行填充对齐后 240 行）、落盘字节与内存一致
 5. **`test_05_pclk_count_per_line`**：`'C'` 命令（PIO SM2 每 HREF 行 PCLK 上升沿
    计数器）—— 每行边缘数 ≈640（official config: DCWCTR=0x11 HDS×2 → 320 distinct
    bytes/line, PCLK_DIV=0xF0 → 640 PCLKs/line），各计数行一致（±3 边沿同步竞态）。

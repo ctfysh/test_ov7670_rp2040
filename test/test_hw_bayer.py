@@ -4,12 +4,12 @@
 在真实 YD-RP2040 + OV7670 上验证 RAW_BAYER 固件 (CAM2 帧协议) 的可观测面:
 
   1. 'R' 寄存器回读 (DBG1+0xFB): COM7=0x01 (sensor raw), COM15=0xC0 (shipped)
-     或 0xD0 (official), PID=0x76, 窗口/缩放寄存器 —— 且在任何 'T' 之前断言 (test_01)
-  2. CAM2 帧流: 'T' upper 切换 ack (DBG1+0xF9+0x00), 帧头 W/H=320×240,
-     载荷 76800 B, 统计特征 = 真实图像 (非全零/伪数据)
-  3. 缝合 + 去马赛克 + BMP: stitch_halves -> (480,320), demosaic -> RGB,
-     rgb_to_bmp 头/尺寸公式一致, 落盘字节与内存一致
-  4. PCLK 计数: 'C' 命令 -> ~640 PCLK/line (official config at 320×240)
+     或 0xD0 (official), PID=0x76, 窗口/缩放寄存器 (test_01)
+  2. CAM2 帧流: 帧头 W/H=320×240, 载荷 76800 B,
+     统计特征 = 真实图像 (非全零/伪数据)
+  3. 单帧无水平重复: 偶数/奇数列 dup_even < 0.9
+  4. 去马赛克 + BMP: demosaic -> RGB, rgb_to_bmp 头/尺寸公式一致, 落盘字节一致
+  5. PCLK 计数: 'C' 命令 -> ~640 PCLK/line (official config at 320×240)
 
 固件版本前提: 板上必须烧 RAW_BAYER 构建。setUpClass 用 'R' 探针读 COM7:
 COM7 != 0x01 -> 整类 SkipTest (非 raw bayer 固件)。test_hw_integration.py
@@ -50,7 +50,6 @@ import bayer_demosaic as bd  # noqa: E402
 CAM2 = b"CAM2"
 DBG1 = b"DBG1"
 REG_MARKER = 0xFB
-WINDOW_MARKER = 0xF9
 PCLK_MARKER = 0xF8
 
 EXPECT_W, EXPECT_H = 320, 240
@@ -71,7 +70,7 @@ EXPECTED_REGS_SHIPPED = {
     0x1E: 0x07,  # MVFP         无翻转
     0x17: 0x11,  # HSTART       全窗
     0x18: 0x61,  # HSTOP
-    0x19: 0x03,  # VSTART       全窗 (init 后、任何 'T' 之前)
+    0x19: 0x03,  # VSTART       全窗
     0x1A: 0x7B,  # VSTOP
     0x03: 0x03,  # VREF
     0x32: 0x80,  # HREF
@@ -89,15 +88,15 @@ EXPECTED_REGS_OFFICIAL = {
     0x0A: 0x76,  # PID          OV7670
     0x0B: 0x73,  # VER
     0x12: 0x01,  # COM7         sensor raw 8-bit Bayer out
-    0x40: 0xD0,  # COM15        full 0-255 range (official table keeps RGB565 bit)
+    0x40: 0xC0,  # COM15       full 0-255 range (no RGB565 bit — fixes D7=D0 defect)
     0x11: 0x01,  # CLKRC        official Table 2-2 Sheet 3 (24 MHz input ref)
     0x6B: 0x0A,  # DBLV         PLL
     0x1E: 0x07,  # MVFP         无翻转
     0x17: 0x11,  # HSTART       全窗
     0x18: 0x61,  # HSTOP
-    0x19: 0x03,  # VSTART       全窗 (init 后、任何 'T' 之前)
-    0x1A: 0x7B,  # VSTOP
-    0x03: 0x03,  # VREF
+    0x19: 0x1E,  # VSTART       AEC-adjusted in official scaling config (DCWCTR=0x11)
+    0x1A: 0x5A,  # VSTOP        AEC-adjusted in official scaling config
+    0x03: 0x00,  # VREF         AEC-adjusted (upper bits of VSTART/VSTOP)
     0x32: 0x80,  # HREF
     0x70: 0x3A,  # SCALING_XSC  official Table 2-2 Sheet 3
     0x71: 0x35,  # SCALING_YSC
@@ -167,7 +166,7 @@ class SerialStream:
 
 @unittest.skipIf(serial is None, "pyserial 未安装, 跳过硬件集成测试")
 class TestRawBayerHardware(unittest.TestCase):
-    """真机用例 (RAW_BAYER 固件): 寄存器 / CAM2 帧 / CFA 分离 / 缝合+去马赛克。"""
+    """真机用例 (RAW_BAYER 固件): 寄存器 / CAM2 帧 / CFA 分离 / 去马赛克+BMP。"""
 
     port = find_port()
 
@@ -224,17 +223,6 @@ class TestRawBayerHardware(unittest.TestCase):
             self.fail(f"DBG1 后 marker 应为 0x{marker:02x}, 得到 0x{m[0]:02x}")
         return m
 
-    def _switch_window(self, half):
-        """'T'+参数字节 -> 断言 ack DBG1+0xF9+param, 等 ~0.5s 窗口稳定。"""
-        param = bc.encode_bayer_window(half)
-        self.s.write(b"T" + param)
-        self.s.flush()
-        self._read_dbg_packet(WINDOW_MARKER, timeout=6)
-        ack = self._read_exact(1, timeout=2)
-        self.assertEqual(ack, param,
-                         f"'T' {half} ack 应回显 {param!r}, 实际 {ack!r} (0xFF=SCCB失败)")
-        time.sleep(0.5)  # ~2 帧窗口稳定
-
     def _capture_cam2(self, timeout=15):
         """同步 CAM2 魔数, 读帧头 + 完整 76800 B 载荷 -> (H, W) uint8。"""
         self._sync(CAM2, timeout=8)
@@ -246,7 +234,7 @@ class TestRawBayerHardware(unittest.TestCase):
         self.assertEqual(len(raw), EXPECT_PAYLOAD, "载荷必须完整 76800 B")
         return np.frombuffer(raw, dtype=np.uint8).reshape(h, w)
 
-    # ---- 用例 (test_01 在前: 先于任何 'T' 断言全窗寄存器) ----
+    # ---- 用例 ----
 
     def test_01_reg_readback_raw_bayer_mode(self):
         """'R': 24 寄存器回读, 关键位证明 raw bayer 模式 (COM7=0x01)。"""
@@ -258,7 +246,7 @@ class TestRawBayerHardware(unittest.TestCase):
         body = self._read_exact(24 * 2, timeout=5)
         self.assertEqual(len(body), 48, "24 × (reg,val) 完整")
         regs = dict(body[i:i + 2] for i in range(0, len(body), 2))
-        # 跨次运行残留: 上次 test_03/04 把窗口切到 half, init 全窗值不再成立
+        # 跨次运行残留: 板上窗口可能未处于 init 默认状态
         vstart, vstop = regs.get(0x19, -1), regs.get(0x1A, -1)
         if vstart == 0x3F or vstop == 0x3F:
             raise unittest.SkipTest(
@@ -270,8 +258,7 @@ class TestRawBayerHardware(unittest.TestCase):
                              f"实际 0x{regs.get(reg, -1):02X}")
 
     def test_02_cam2_frame_stats(self):
-        """'T' upper -> ack; CAM2 帧头 320x240, 载荷 76800 B, 统计=真实图像。"""
-        self._switch_window("upper")
+        """CAM2 帧头 320x240, 载荷 76800 B, 统计=真实图像。"""
         cfa = self._capture_cam2()
         raw = cfa.tobytes()
         nz = sum(1 for x in raw if x != 0)
@@ -282,7 +269,7 @@ class TestRawBayerHardware(unittest.TestCase):
                            f"真实帧应含 >100 种字节值, 实际 {distinct}")
 
     def test_03_no_horizontal_duplication(self):
-        """上/下半帧无水平 2x 重复 (dup_even < 0.9): 每字节必须独立采样。
+        """单帧无水平 2x 重复 (dup_even < 0.9): 每字节必须独立采样。
 
         Default build uses official Table 2-2 registers + per-PCLK sampling.
         DCWCTR=0x11 applies HDS×2 downsampling, producing 320 distinct bytes/line
@@ -290,39 +277,25 @@ class TestRawBayerHardware(unittest.TestCase):
         duplication expected. Legacy shipped build (every-2nd-PCLK) was the
         workaround for the 640×480 dup issue (T7, 2026-08-14).
         """
-        self._switch_window("upper")
-        upper = self._capture_cam2()
-        self._switch_window("lower")
-        lower = self._capture_cam2()
-        self.__class__.pair = (upper, lower)  # 供 test_04 复用, 免重复采集
-        for label, half in (("upper", upper), ("lower", lower)):
-            dup_even = float((half[:, 0::2] == half[:, 1::2]).mean())
-            self.assertLess(dup_even, 0.90,
-                            f"{label} 半帧偶数/奇数列逐位相等率 "
-                            f"{dup_even:.3f} >= 0.9: 疑似 2 PCLK/byte 字节重复")
+        cfa = self._capture_cam2()
+        dup_even = float((cfa[:, 0::2] == cfa[:, 1::2]).mean())
+        self.assertLess(dup_even, 0.90,
+                        f"偶数/奇数列逐位相等率 "
+                        f"{dup_even:.3f} >= 0.9: 疑似 2 PCLK/byte 字节重复")
 
-    def test_04_stitch_demosaic_bmp(self):
-        """缝合 (480,320) + 去马赛克 RGB + BMP 头/尺寸/落盘一致。"""
-        pair = getattr(self.__class__, "pair", None)
-        if pair is None:
-            self._switch_window("upper")
-            upper = self._capture_cam2()
-            self._switch_window("lower")
-            lower = self._capture_cam2()
-        else:
-            upper, lower = pair
-        full = bc.stitch_halves(upper, lower)
-        self.assertEqual(full.shape, (480, 320))
-        rgb = bd.demosaic_bayer(full)
-        self.assertEqual(rgb.shape, (480, 320, 3))
+    def test_04_demosaic_bmp(self):
+        """去马赛克 RGB + BMP 头/尺寸/落盘一致 (single 320×240 frame)."""
+        cfa = self._capture_cam2()
+        rgb = bd.demosaic_bayer(cfa)
+        self.assertEqual(rgb.shape, (240, 320, 3))
         self.assertEqual(rgb.dtype, np.uint8)
-        bmp = bd.rgb_to_bmp(320, 480, rgb)
+        bmp = bd.rgb_to_bmp(320, 240, rgb)
         self.assertEqual(bmp[:2], b"BM")
         row_size = (320 * 3 + 3) & ~3
-        self.assertEqual(len(bmp), 54 + row_size * 480,
-                         "BMP 长度 = 54 + 行填充对齐后 480 行")
+        self.assertEqual(len(bmp), 54 + row_size * 240,
+                         "BMP 长度 = 54 + 行填充对齐后 240 行")
         with tempfile.TemporaryDirectory() as d:
-            path = f"{d}/frame_320x480.bmp"
+            path = f"{d}/frame_320x240.bmp"
             with open(path, "wb") as f:
                 f.write(bmp)
             with open(path, "rb") as f:

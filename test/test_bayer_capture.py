@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Bayer 采集纯函数验证 (test/test_bayer_capture.py) — Layers I/J/K
+"""Bayer 采集纯函数验证 (test/test_bayer_capture.py) — Layers J/K
 
 纯软件、无硬件依赖, 只 import 仓库根目录的 bayer_capture (import 安全)。
 
-  Layer I  缝合     stitch_halves(): 形状/行恒等/尺寸不匹配报错
   Layer J  CAM2    cam2_frame() 封装与往返; cam2_parse(): 坏魔数/错误尺寸/
                    截断 -> None, 垃圾前缀后同步恢复
-  Layer K  窗口/统计 encode_bayer_window(): 'T' 参数字节; cfa_means(): 逐通道
-                   均值精确值, pattern 生效
+  Layer K  统计    cfa_means(): 逐通道均值精确值, pattern 生效
 
 运行: python3 -m unittest discover -s test -p "test_bayer_capture.py" -v
 """
@@ -27,38 +25,12 @@ if _ROOT not in sys.path:
 
 import bayer_capture as bc  # noqa: E402
 
-W, H = 640, 240
-_PAYLOAD = bytes(range(256)) * (W * H // 256)   # 153,600 B 确定性载荷
+W, H = 320, 240
+_PAYLOAD = bytes(range(256)) * (W * H // 256)   # 76,800 B 确定性载荷
 
 
 def _frame(payload=_PAYLOAD):
     return bc.cam2_frame(W, H, payload)
-
-
-# ======================================================================
-# Layer I — 缝合
-# ======================================================================
-
-class TestStitchHalves(unittest.TestCase):
-    """stitch_halves(): 上/下半帧 vstack -> (480, 640)。"""
-
-    def test_stitch_basic(self):
-        upper = np.full((H, W), 0x10, dtype=np.uint8)
-        lower = np.full((H, W), 0x20, dtype=np.uint8)
-        full = bc.stitch_halves(upper, lower)
-        self.assertEqual(full.shape, (2 * H, W))
-        self.assertEqual(full.dtype, np.uint8)
-        np.testing.assert_array_equal(full[:H], upper)
-        np.testing.assert_array_equal(full[H:], lower)
-
-    def test_stitch_row_identity_random(self):
-        rng = np.random.default_rng(42)
-        upper = rng.integers(0, 256, size=(H, W), dtype=np.uint8)
-        lower = rng.integers(0, 256, size=(H, W), dtype=np.uint8)
-        full = bc.stitch_halves(upper, lower)
-        for y in range(2 * H):
-            src = upper if y < H else lower
-            np.testing.assert_array_equal(full[y], src[y % H])
 
 
 # ======================================================================
@@ -101,7 +73,7 @@ class TestCam2Parse(unittest.TestCase):
         self.assertEqual(got, (len(garbage), W, H))
 
     def test_rejects_wrong_dims(self):
-        frame = bc.cam2_frame(320, H, bytes(320 * H))
+        frame = bc.cam2_frame(640, H, bytes(640 * H))
         self.assertIsNone(bc.cam2_parse(frame, W, H))
 
     def test_truncated_payload(self):
@@ -115,22 +87,8 @@ class TestCam2Parse(unittest.TestCase):
 
 
 # ======================================================================
-# Layer K — 'T' 参数编码 + CFA 统计
+# Layer K — CFA 统计
 # ======================================================================
-
-class TestEncodeBayerWindow(unittest.TestCase):
-    """encode_bayer_window(): 'T' 命令参数字节 (固件契约: 0x00 上 / 0x01 下)。"""
-
-    def test_upper_lower_bytes(self):
-        self.assertEqual(bc.encode_bayer_window("upper"), b"\x00")
-        self.assertEqual(bc.encode_bayer_window("lower"), b"\x01")
-
-    def test_invalid_half_raises(self):
-        for bad in ("top", "", 0, None):
-            with self.subTest(bad=bad):
-                with self.assertRaises(ValueError):
-                    bc.encode_bayer_window(bad)
-
 
 class TestCfaMeans(unittest.TestCase):
     """cfa_means(): 逐通道 CFA 均值精确值 (统计验证的纯函数底座)。"""

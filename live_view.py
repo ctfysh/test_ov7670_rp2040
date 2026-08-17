@@ -8,14 +8,12 @@ time with pygame.  Protocol is auto-detected from the frame magic:
   CAM1  "CAM1" + W:H + WxHx2  RGB565 big-endian (default QVGA build)
   CAM2  "CAM2" + W:H + WxH    raw 8-bit Bayer CFA (-DRAW_BAYER build)
 
-CAM2 is shown as a full 640x480 view by default: the viewer auto-toggles the
-'T' half-window, stitches upper+lower 640x240 halves into one canvas, and
-re-syncs after each switch.  Grayscale by default (raw CFA values); pass
---demosaic for a bilinear-interpolated color preview.  If no frame arrives
-for NO_SIGNAL_TIMEOUT seconds the screen turns white with "NO SIGNAL".
+CAM2 is shown directly at 320x240 — single fixed window, no half-frame
+switching.  Grayscale by default (raw CFA values); pass --demosaic for a
+bilinear-interpolated color preview.  If no frame arrives for
+NO_SIGNAL_TIMEOUT seconds the screen turns white with "NO SIGNAL".
 
 Keys:
-  T        force-switch CAM2 upper/lower half window (auto-toggle also runs)
   S        save current frame as BMP (live_NNN.bmp)
   Q / Esc  quit
 
@@ -27,7 +25,7 @@ Usage:  python3 live_view.py [port] [scale] [rotate] [--demosaic] [--frames N]
   --frames N  exit after N displayed frames (default 0 = run forever)
 
 The viewer adapts to whatever WxH the firmware sends (QVGA 320x240 CAM1,
-640x240 CAM2 half-frame; FRAME_W/FRAME_H rebuilds just work).  Decoding is
+320x240 CAM2; FRAME_W/FRAME_H rebuilds just work).  Decoding is
 vectorized with numpy.  Rotation is applied on the numpy image before
 display, so S-key snapshots are what you see (WYSIWYG).
 """
@@ -43,7 +41,6 @@ import capture  # reuse rgb565_to_bmp fallback (unrotated) for S-key snapshots
 
 CAM1_MAGIC = b"CAM1"
 CAM2_MAGIC = b"CAM2"
-DBG1_F9 = b"DBG1\xF9"  # 'T' ack: DBG1 + 0xF9 + param (0x00 upper / 0x01 lower)
 READ_CHUNK = 4096
 NO_SIGNAL_TIMEOUT = 2.0  # seconds without a valid frame -> white NO-SIGNAL screen
 
@@ -118,19 +115,6 @@ class _Stream:
         self.drop(n)
         return out
 
-    def wait_ack(self, param, timeout_s=5.0):
-        """Wait for DBG1+0xF9+param in the stream. True on match, False on timeout."""
-        t0 = time.time()
-        while time.time() - t0 < timeout_s:
-            i = self.buf.find(DBG1_F9)
-            if i >= 0 and i + 6 <= len(self.buf):
-                got = self.buf[i + 5]
-                self.drop(i + 6)
-                return got == param
-            if not self.fill():
-                time.sleep(0.05)
-        return False
-
 
 def main():
     argv = sys.argv[1:]
@@ -174,8 +158,6 @@ def main():
     t0 = time.time()
     running = True
     mode = "CAM1"
-    half = "upper"
-    canvas = None       # CAM2 full-frame canvas (2H x W x 3); None until first frame
     last_frame_t = time.time()
     no_signal_logged = False
 
@@ -191,17 +173,6 @@ def main():
                     pygame.image.save(cur_surf, fname)
                     print(f"  saved {fname}")
                     saved += 1
-                elif ev.key == pygame.K_t:
-                    half = "lower" if half == "upper" else "upper"
-                    param = 0x00 if half == "upper" else 0x01
-                    s.write(b"T" + bytes([param]))
-                    if stream.wait_ack(param):
-                        print(f"  half -> {half}")
-                    else:
-                        print("  'T' ack timeout (CAM1 build?); ignored")
-                    s.reset_input_buffer()  # drop stale CAM2 frames mid-switch
-                    stream.buf = b""
-                    canvas = None  # re-stitch from scratch after half switch
 
         magic = stream.sync_magic()
         if magic is None:
@@ -232,24 +203,7 @@ def main():
         no_signal_logged = False
 
         if magic == CAM2_MAGIC:
-            half_img = decode_bayer(payload, w, h, demosaic=demosaic)
-            # stitch upper/lower half into full-frame white canvas
-            full_h = h * 2
-            if canvas is None or canvas.shape[:2] != (full_h, w):
-                canvas = np.full((full_h, w, 3), 255, dtype=np.uint8)
-            if half == "upper":
-                canvas[:h] = half_img
-            else:
-                canvas[h:] = half_img
-            img = canvas
-            # auto-toggle half so both halves keep refreshing
-            half = "lower" if half == "upper" else "upper"
-            param = 0x00 if half == "upper" else 0x01
-            s.write(b"T" + bytes([param]))
-            if not stream.wait_ack(param, timeout_s=1.0):
-                print("  auto 'T' ack timeout")
-            s.reset_input_buffer()  # drop stale CAM2 frames mid-switch
-            stream.buf = b""
+            img = decode_bayer(payload, w, h, demosaic=demosaic)
         else:
             img = decode_rgb565(payload, w, h)
 
@@ -273,9 +227,8 @@ def main():
             fps = frames / (now - t0)
             frames = 0
             t0 = now
-        tag = f"{mode}" + (" [stitched]" if magic == CAM2_MAGIC else "")
         pygame.display.set_caption(
-            f"OV7670 Live {tag} {img_w}x{img_h} (rot {rot}deg)  S=save T=half Q=quit")
+            f"OV7670 Live {mode} {img_w}x{img_h} (rot {rot}deg)  S=save Q=quit")
         screen.blit(font.render(f"{fps:.1f} FPS", True, (0, 255, 0)), (8, 8))
         pygame.display.flip()
         clock.tick(120)
@@ -290,4 +243,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

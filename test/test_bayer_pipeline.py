@@ -24,26 +24,36 @@ if _ROOT not in sys.path:
 
 import bayer_pipeline as bp  # noqa: E402  真实管线实现
 
-# 采集验证帧 (若存在): 缺陷区 x502-516 (region_cols), 修复检查 y60-160
-_FRAME = os.path.join(_ROOT, "bayer_verify", "frame_000_640x480.raw")
 _REGION_COLS = range(502, 517)
 _REGION_Y = (60, 160)
 _REGION_THRESH = 55.0
+_BG_VAL = 2
+_DEFECT_EVEN = 146
+_DEFECT_ODD = 80
+
+
+def _make_synthetic_raw():
+    raw = np.full((480, 640), _BG_VAL, dtype=np.uint8)
+    for y in range(_REGION_Y[0], _REGION_Y[1]):
+        for x in _REGION_COLS:
+            raw[y, x] = _DEFECT_EVEN if x % 2 == 0 else _DEFECT_ODD
+    dead = [(200, 100, 0), (200, 200, 0)]
+    for dy, dx, val in dead:
+        raw[dy, dx] = val
+    return raw
+
+
+_SYNTH_RAW = _make_synthetic_raw()
 
 
 class TestGMap(unittest.TestCase):
-    """位序解码: g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3 (b1 为 MSB)。"""
 
     def test_b1_msb(self):
-        # 只有 b1=1: g 应为 128
         self.assertEqual(bp.g_map(np.array([2], np.uint8))[0], 128)
-        # 只有 b7=1: g 应为 64
         self.assertEqual(bp.g_map(np.array([128], np.uint8))[0], 64)
-        # 全 1 (b1..b7): 128+64+32+16+8+4 = 252
         self.assertEqual(bp.g_map(np.array([254], np.uint8))[0], 252)
 
     def test_g_map_is_four_multiple(self):
-        # 输出永远 4 的倍数, 且 <= 252
         v = np.arange(256, dtype=np.uint8)
         g = bp.g_map(v)
         self.assertTrue((g % 4 == 0).all())
@@ -51,10 +61,8 @@ class TestGMap(unittest.TestCase):
 
 
 class TestFixDefectRegion(unittest.TestCase):
-    """楔形区域缺陷修复: 带外同相位参考插值 + 逐像素阈值判定。"""
 
     def test_synthetic_defect(self):
-        # 8x8 CFA, 列 4 全为缺陷 (值 250), 参考列 2/6 (值 100)
         cfa = np.full((8, 8), 100.0)
         cfa[:, 4] = 250.0
         fixed, mask, n = bp.fix_defect_region(cfa, {4}, 0, 8, threshold=55.0)
@@ -63,27 +71,22 @@ class TestFixDefectRegion(unittest.TestCase):
         np.testing.assert_allclose(fixed[:, 4], 100.0)
 
     def test_region_threshold_respects_inner(self):
-        # 值差 <= 阈值的缺陷列不被替换
         cfa = np.full((6, 6), 100.0)
-        cfa[:, 3] = 130.0  # 差 30 < 55
+        cfa[:, 3] = 130.0
         fixed, mask, n = bp.fix_defect_region(cfa, {3}, 0, 6, threshold=55.0)
         self.assertEqual(n, 0)
         self.assertEqual(mask.sum(), 0)
         np.testing.assert_allclose(fixed, cfa)
 
-    def test_real_frame_replacement_count(self):
-        if not os.path.exists(_FRAME):
-            self.skipTest(f"missing {_FRAME}")
-        raw = np.fromfile(_FRAME, dtype=np.uint8).reshape(480, 640)
-        cfa = bp.g_map(raw).astype(np.float64)
+    def test_synthetic_frame_replacement_count(self):
+        cfa = bp.g_map(_SYNTH_RAW).astype(np.float64)
         fixed, mask, n = bp.fix_defect_region(
             cfa, _REGION_COLS, _REGION_Y[0], _REGION_Y[1], _REGION_THRESH)
-        # 与交付版 final_v8 一致: 430 个缺陷像素被替换
-        self.assertEqual(n, 430)
-        # 所有替换点落在缺陷列内
+        ncols = len(list(_REGION_COLS))
+        nrows = _REGION_Y[1] - _REGION_Y[0]
+        self.assertEqual(n, ncols * nrows)
         bad_cols = set(np.unique(np.where(mask)[1]))
         self.assertTrue(bad_cols <= set(_REGION_COLS))
-        # 替换值 == 带外同相位参考均值 (逐点重建验证, 0 失配)
         mism = 0
         for y in range(_REGION_Y[0], _REGION_Y[1]):
             for x in range(_REGION_COLS.start, _REGION_COLS.stop):
@@ -107,15 +110,10 @@ class TestFixDefectRegion(unittest.TestCase):
                     mism += 1
         self.assertEqual(mism, 0)
 
-    def test_real_frame_region_gone(self):
-        """修复后缺陷行 y=100: 奇列塌点 (12-24) 消失, 行恢复连续。"""
-        if not os.path.exists(_FRAME):
-            self.skipTest(f"missing {_FRAME}")
-        raw = np.fromfile(_FRAME, dtype=np.uint8).reshape(480, 640)
-        cfa = bp.g_map(raw).astype(np.float64)
+    def test_synthetic_frame_region_gone(self):
+        cfa = bp.g_map(_SYNTH_RAW).astype(np.float64)
         fixed, mask, _ = bp.fix_defect_region(
             cfa, _REGION_COLS, _REGION_Y[0], _REGION_Y[1], _REGION_THRESH)
-        # 原始缺陷行 y=100: 偶列 204-228 爆点, 奇列 12-24 塌点 (取证测量值)
         raw_row = cfa[100, 502:517]
         fixed_row = fixed[100, 502:517]
         self.assertTrue((raw_row > 180).any())
@@ -136,11 +134,10 @@ class TestFixDefectRegion(unittest.TestCase):
 
 
 class TestFixDeadPixels(unittest.TestCase):
-    """散点死点修复: 同色 4-邻域中值, 差>阈替换, 区域掩码跳过。"""
 
     def test_single_dead_pixel(self):
         cfa = np.full((10, 10), 100.0)
-        cfa[5, 5] = 0.0  # 死点
+        cfa[5, 5] = 0.0
         fixed, n = bp.fix_dead_pixels(cfa, threshold=60.0)
         self.assertEqual(n, 1)
         self.assertEqual(fixed[5, 5], 100.0)
@@ -152,11 +149,10 @@ class TestFixDeadPixels(unittest.TestCase):
         skip[5, 5] = True
         fixed, n = bp.fix_dead_pixels(cfa, threshold=60.0, skip=skip)
         self.assertEqual(n, 0)
-        self.assertEqual(fixed[5, 5], 0.0)  # 掩码保护, 不修改
+        self.assertEqual(fixed[5, 5], 0.0)
 
 
 class TestRenderStitched(unittest.TestCase):
-    """分相位渲染: 上 BGGR / 下 GRBG, 灰度世界 WB, 伽马。"""
 
     def test_output_shape_and_dtype(self):
         rng = np.random.default_rng(42)
@@ -166,7 +162,6 @@ class TestRenderStitched(unittest.TestCase):
         self.assertEqual(rgb.dtype, np.uint8)
 
     def test_gray_world_default(self):
-        # 全帧单色 CFA + b_extra=1.0 (无额外降蓝): WB 后 R/G/B 均值趋于一致
         cfa = np.full((480, 640), 128.0)
         rgb = bp.render_stitched(cfa, b_extra=1.0)
         means = [rgb[:, :, i].mean() for i in range(3)]
@@ -181,26 +176,20 @@ class TestRenderStitched(unittest.TestCase):
 
 
 class TestPipeline(unittest.TestCase):
-    """端到端: 完整管线输出确定性 + 与逐函数调用一致。"""
 
     def test_pipeline_reproducible(self):
-        if not os.path.exists(_FRAME):
-            self.skipTest(f"missing {_FRAME}")
-        raw = np.fromfile(_FRAME, dtype=np.uint8).reshape(480, 640)
-        rgb1, s1 = bp.pipeline(raw)
-        rgb2, s2 = bp.pipeline(raw)
+        rgb1, s1 = bp.pipeline(_SYNTH_RAW)
+        rgb2, s2 = bp.pipeline(_SYNTH_RAW)
         self.assertTrue(np.array_equal(rgb1, rgb2))
         self.assertEqual(s1, s2)
 
     def test_pipeline_region_stats(self):
-        if not os.path.exists(_FRAME):
-            self.skipTest(f"missing {_FRAME}")
-        raw = np.fromfile(_FRAME, dtype=np.uint8).reshape(480, 640)
-        rgb, stats = bp.pipeline(raw)
-        self.assertEqual(stats["region_replaced"], 430)
-        self.assertEqual(stats["region_skipped"], 430)
+        rgb, stats = bp.pipeline(_SYNTH_RAW)
+        ncols = len(list(_REGION_COLS))
+        nrows = _REGION_Y[1] - _REGION_Y[0]
+        self.assertEqual(stats["region_replaced"], ncols * nrows)
+        self.assertEqual(stats["region_skipped"], ncols * nrows)
         self.assertGreater(stats["dead_replaced"], 0)
-        # 全帧通道均值合理 (非全黑/全白)
         means = [rgb[:, :, i].mean() for i in range(3)]
         self.assertTrue(all(20 < m < 240 for m in means))
 

@@ -88,28 +88,27 @@ USB CDC (Serial) ◀── loop() 发送 "CAM1" + W/H + RGB565 ◀─┘
 ## Raw bayer 模式（实验）
 
 `-DRAW_BAYER` 构建把 OV7670 切到 **sensor raw 8-bit**（COM7=0x01）并输出
-320×240 拜耳 CFA 的 **上/下半帧**（各 320×240，`'T'` 命令切换窗口）：
+320×240 拜耳 CFA 的**单窗口帧流**：
 
 ```
 "CAM2" (4 B) | W (u16 BE) | H (u16 BE) | W×H 字节原始 Bayer（1 byte/px）
 ```
 
-- **帧协议**：`bayer_capture.py` 按 `"CAM2"` 魔数滑窗同步，`'T'` 上/下半帧
-  各 76800 B，`stitch_halves` 拼回 320×480。
+- **帧协议**：`bayer_capture.py` 按 `"CAM2"` 魔数滑窗同步，每帧 76800 B。
 - **采集 CLI**（依赖 `pyserial`；纯函数层零依赖）：
   ```bash
-  python3 bayer_capture.py --port /dev/cu.usbmodemXXXX --out bayer_frames --pairs 3 --bmp
+  python3 bayer_capture.py --port /dev/cu.usbmodemXXXX --out bayer_frames --frames 3 --bmp
   ```
-  `--out`（默认 `bayer_frames/`）、`--pairs`（上/下帧对数，默认 3）、`--pattern`
-  （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 320×480 BMP）。
+  `--out`（默认 `bayer_frames/`）、`--frames`（采集帧数，默认 3）、`--pattern`
+  （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 320×240 BMP）。
 - **固件构建**（`platformio.ini`）：
   - 默认 `[env:rpipico]` = 官方 Table 2-2 寄存器表 + per-PCLK 采样
     （`-DRAW_BAYER_OFFICIAL_REGS -DRAW_BAYER_PER_PCLK`）。DCWCTR=0x11
     HDS×2 下采样产生 320 不同字节/行, 匹配 FRAME_W=320。
   - `[env:rpipico_legacy]` = shipped 表 + PIO 每 2nd PCLK 采样（T7 修复,
     为 640×480 设计; 在 320×240 下输出 640 不同字节/行但 DMA 仅捕获 320）。
-- ✅ `live_view.py` 已适配 raw bayer（CAM2）：自动交替发 `'T'` 收上/下半帧，
-  拼接成 **320×480 完整画面**显示（灰度默认 / `--demosaic` 彩色），
+- ✅ `live_view.py` 已适配 raw bayer（CAM2）：直接显示 320×240 帧
+  （灰度默认 / `--demosaic` 彩色），
   无信号超时 2s 显示白色 NO-SIGNAL 屏；`capture.py` 仍为 RGB565（CAM1）专用。
   `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
 - ✅ **取证管线 `bayer_pipeline.py`**（§10.6）：上窗楔形缺陷区（x 502–516）取证
@@ -175,12 +174,11 @@ python3 live_view.py [port] [scale] [rotate] [--demosaic] [--frames N]
 # 例：2 倍放大 + 向左旋转 90°（默认）
 python3 live_view.py            # port=自动探测, scale=2, rotate=90
 python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
-# raw bayer 固件（CAM2）：自动拼接 320×480 完整画面，--demosaic 彩色，--frames 6 退出
+# raw bayer 固件（CAM2）：直接显示 320×240，--demosaic 彩色，--frames 6 退出
 python3 live_view.py --demosaic --frames 6
 ```
 
-按键：`S` 存当前帧（所见即所得 BMP），`T` 强制切换 CAM2 上/下半帧窗口
-（CAM2 默认自动交替拼接，无需手动按），`Q`/`Esc` 退出。无信号时显示白屏。
+按键：`S` 存当前帧（所见即所得 BMP），`Q`/`Esc` 退出。无信号时显示白屏。
 
 ## 诊断命令（串口发送单字符）
 
@@ -189,7 +187,6 @@ python3 live_view.py --demosaic --frames 6
 | `W` | 快速波形采样（GPIO 直读，不干扰采集流水线） |
 | `S` | 慢速波形采样 |
 | `R` | 寄存器回读：验证 init 写入 + 实时 AGC/AEC 状态（`DBG1` 包） |
-| `T` | raw bayer 模式切换上/下半帧窗口（`-DRAW_BAYER` 构建） |
 | `C` | PCLK 边沿直测：SM2 PIO 按行计数 PCLK 上升沿，`DBG1` 包回 4 行 u32 BE（T7 决定性测量，`-DRAW_BAYER` 构建） |
 | `B` | 软重启进 BOOTSEL（U 盘模式拖放刷固件） |
 
@@ -216,7 +213,7 @@ python3 live_view.py --demosaic --frames 6
 ├── real_product.jpg        # 成品实物图
 ├── capture.py          # 单帧捕获 → BMP
 ├── live_view.py        # 实时查看器（numpy + pygame；CAM1 RGB565 + CAM2 raw bayer）
-├── bayer_capture.py    # raw bayer 采集 CLI + 纯函数层（缝合/窗口编码/CFA 均值）
+├── bayer_capture.py    # raw bayer 采集 CLI + 纯函数层（CAM2 帧协议/CFA 均值）
 ├── bayer_demosaic.py   # 拜耳去马赛克 + BMP
 ├── bayer_pipeline.py   # 取证管线（位序解码 + 区域/死点缺陷修复 + 分相位渲染，§10.6）
 ├── bayer_pipeline.R    # 取证管线 R 版（与 Python 版逐像素等价，交叉验证 §10.6）
