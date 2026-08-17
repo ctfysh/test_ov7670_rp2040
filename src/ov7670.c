@@ -365,16 +365,10 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x40, 0xc0}, // COM15: full 0-255 range (no RGB565 bit — fixes D7=D0 defect)
     {0x1e, 0x07}, // MVFP: no mirror/vflip (matches shipped)
     {0x0c, 0x00}, // COM3: OFFICIAL 0x00 (= shipped)
-#ifdef RAW_BAYER_COM14_BIT4
-    {0x3e, 0x10}, // COM14: bit4 only — test half-gate (avoids even/odd asymmetry?)
-#elif defined(RAW_BAYER_COM14_BIT3)
-    {0x3e, 0x08}, // COM14: bit3 only — test half-gate (avoids even/odd asymmetry?)
-#elif defined(RAW_BAYER_COM14_V2)
-    {0x3e, 0x18}, // COM14: V2 override — open PCLK_DIV gate (bit4+bit3=1).
-                   // Without this, PCLK_DIV=0xF0 is dead and DCWCTR HDS×2
-                   // has no effect on PCLK timing. Tests whether enabling
-                   // the gate makes the sensor emit 320 distinct bytes/line
-                   // (each held 2 PCLKs) instead of 640 distinct bytes/line.
+#ifdef RAW_BAYER_COM14_V2
+    {0x3e, 0x18}, // COM14: open PCLK_DIV gate (bit4+bit3=1). Without this,
+                   // PCLK_DIV=0xF0 is dead and DCWCTR HDS×2 has no effect.
+                   // Bit4 is the active ingredient (bit3 alone is a no-op).
 #else
     {0x3e, 0x00}, // COM14: OFFICIAL 0x00 (shipped: 0x18)
 #endif
