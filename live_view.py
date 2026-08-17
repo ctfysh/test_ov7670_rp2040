@@ -152,7 +152,7 @@ def main():
     print(f"Connected {port}. Waiting for frames...")
 
     pygame.init()
-    screen = pygame.display.set_mode((640 * scale, 480 * scale))
+    screen = pygame.display.set_mode((320 * scale, 240 * scale))
     screen.fill((255, 255, 255))
     pygame.display.set_caption("OV7670 Live — NO SIGNAL  S=save Q=quit")
     pygame.display.flip()
