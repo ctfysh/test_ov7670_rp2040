@@ -2,28 +2,31 @@
 # OV7670 Raw Bayer 处理管线 (bayer_pipeline.R)
 #
 # 用 R 语言完整重现 bayer_pipeline.py 的取证管线:
-#   g_map                  : 6-bit 位序解码 (b1=MSB, 序 (1,7,6,5,4,3)) -> 0..252
 #   fix_dead_pixels        : 散点死点修复 (同色 4-邻域中值, 差>阈 替换)
 #   fix_defect_region      : 楔形区域缺陷修复 (带外同相位参考插值, 逐像素判定)
 #   demosaic_bayer         : 双线性 G-first + G 校正去马赛克 (valid-mask, 无 padding)
 #   render_stitched        : 上/下半窗分相位去马赛克 + 拼接 + WB + 伽马
 #   pipeline               : 完整管线 -> RGB 数组 + 修复统计
 #
-# 取证结论 (docs/RAW_BAYER_OPERATION_MATH.md §10.6, 与 Python 版一致):
-# - 位序: b1 为真 MSB, g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3
-# - 相位: 上窗 BGGR, 下窗 GRBG; 灰度世界 R 增益 2.15, B 增益 1.35, 用户偏好 B*0.93
-# - 伽马 0.85 提亮
-# - 粉区缺陷: frame_000 上窗 x503-515, y60-160 楔形块, 带外同相位参考偏差>55 替换
+# 解码模式:
+# - COM15=0xC0 (当前): 8-bit 全独立, raw 直通, 不需要 g_map.
+# - COM15=0xD0 (旧): 6-bit 有效 (bit0==bit7 镜像, bit2 噪声), 需要 g_map 解码.
+#   旧模式向后兼容: pipeline(..., use_gmap=TRUE, map="old"|"new").
 #
-# 用法 (与 Python CLI 等价):
+# 相位: 上下窗均 BGGR (COM15=0xC0 后全帧 CFA pattern 一致)
+# 灰度世界 WB, 伽马 0.85 提亮
+#
+# 用法:
 #   Rscript bayer_pipeline.R input.raw -o out.png
-#   Rscript bayer_pipeline.R input.raw -o out.png --no-region-fix --no-dead-fix
-#   Rscript bayer_pipeline.R input.raw -o out.png --region-cols 502-516 --region-y 60-160
+#   Rscript bayer_pipeline.R input.raw -o out.png --use-gmap --map old  # 旧模式
 
 suppressPackageStartupMessages(library(png))  # writePNG
 
-# --- 6-bit 位序解码: g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3 (0..252, 4 的倍数) ---
-g_map <- function(v) {
+# --- g_map 保留供向后兼容 (COM15=0xD0 旧模式) ---
+# map="old": g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3 (08-14 会话)
+# map="new": g(v)=128*b2+64*b7+32*b6+16*b5+8*b4+4*b3 (08-16 会话)
+# COM15=0xC0 模式下 8 位全部独立有效, 直接用原始字节, 不需要 g_map.
+g_map <- function(v, map = "old") {
     dims <- dim(v)
     v <- as.integer(v)
     b7 <- bitwAnd(v %/% 128L, 1L)
@@ -31,8 +34,8 @@ g_map <- function(v) {
     b5 <- bitwAnd(v %/% 32L, 1L)
     b4 <- bitwAnd(v %/% 16L, 1L)
     b3 <- bitwAnd(v %/% 8L, 1L)
-    b1 <- bitwAnd(v %/% 2L, 1L)
-    out <- as.integer(128 * b1 + 64 * b7 + 32 * b6 + 16 * b5 + 8 * b4 + 4 * b3)
+    msb <- if (map == "new") bitwAnd(v %/% 4L, 1L) else bitwAnd(v %/% 2L, 1L)
+    out <- as.integer(128 * msb + 64 * b7 + 32 * b6 + 16 * b5 + 8 * b4 + 4 * b3)
     dim(out) <- dims   # 恢复矩阵形状
     out
 }
@@ -210,14 +213,17 @@ render_stitched <- function(cfa, upper_pattern = "BGGR", lower_pattern = "GRBG",
     floor(img)                   # 模拟 numpy astype(uint8) 截断
 }
 
-# --- 完整管线: 位序解码 -> 楔形区域修复 -> 散点死点修复 -> 渲染 ---
-# raw: 480x640 整数矩阵 (原始字节)。返回 list(rgb=, stats=)
-pipeline <- function(raw, region_cols = 502:516, region_y = c(60, 160),
+# --- 完整管线: [可选 g_map] -> 楔形区域修复 -> 散点死点修复 -> 渲染 ---
+# raw: 480x640 整数矩阵 (原始字节)。
+# use_gmap: TRUE 时先做 6-bit 位序解码 (旧 COM15=0xD0 模式), FALSE 直通。
+# 返回 list(rgb=, stats=)
+pipeline <- function(raw, use_gmap = FALSE, map = "old",
+                     region_cols = 502:516, region_y = c(60, 160),
                      dead_threshold = 60.0, region_threshold = 55.0,
                      fix_region = TRUE, fix_dead = TRUE,
-                     upper_pattern = "BGGR", lower_pattern = "GRBG",
+                     upper_pattern = "GRBG", lower_pattern = "BGGR",
                      r_gain = NULL, b_gain = NULL, gamma = 0.85, b_extra = 0.93) {
-    cfa <- g_map(raw) + 0.0
+    cfa <- if (use_gmap) g_map(raw, map) + 0.0 else raw + 0.0
     stats <- list()
     replaced <- matrix(FALSE, nrow(cfa), ncol(cfa))
     if (fix_region) {
@@ -266,6 +272,9 @@ main <- function(argv) {
 
     no_region <- get_flag("--no-region-fix")
     no_dead <- get_flag("--no-dead-fix")
+    use_gmap <- get_flag("--use-gmap")
+    map <- get_val("--map", "old")
+    if (!map %in% c("old", "new")) stop("--map must be old or new", call. = FALSE)
     region_cols_str <- get_val("--region-cols", "502-516")
     region_y_str <- get_val("--region-y", "60-160")
     dead_threshold <- as.numeric(get_val("--dead-threshold", "60"))
@@ -274,6 +283,8 @@ main <- function(argv) {
     b_gain_str <- get_val("--b-gain", NA)
     b_extra <- as.numeric(get_val("--b-extra", "0.93"))
     gamma <- as.numeric(get_val("--gamma", "0.85"))
+    upper_pattern <- get_val("--upper", "GRBG")
+    lower_pattern <- get_val("--lower", "BGGR")
 
     rc <- parse_range(region_cols_str, "region-cols")
     ry <- parse_range(region_y_str, "region-y")
@@ -287,9 +298,10 @@ main <- function(argv) {
     if (length(bytes) < 480 * 640) stop(sprintf("%s: %d B < 需要 %d B (480x640)", input, length(bytes), 480 * 640), call. = FALSE)
     raw <- matrix(as.integer(bytes[1:(480 * 640)]), nrow = 480, ncol = 640, byrow = TRUE)
 
-    res <- pipeline(raw, region_cols = rc$cols, region_y = ry$y,
+    res <- pipeline(raw, use_gmap = use_gmap, map = map, region_cols = rc$cols, region_y = ry$y,
                     dead_threshold = dead_threshold, region_threshold = region_threshold,
                     fix_region = !no_region, fix_dead = !no_dead,
+                    upper_pattern = upper_pattern, lower_pattern = lower_pattern,
                     r_gain = r_gain, b_gain = b_gain, gamma = gamma, b_extra = b_extra)
 
     # 写 PNG (8-bit RGB, 与 PIL 输出等价)

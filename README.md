@@ -118,14 +118,23 @@ VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切�
   与修复——位序解码 → 区域/死点缺陷修复 → 分相位渲染 → CLI 落盘。与交付版
   `final_v8_precise.png` 一致（region_replaced=430），13 个测试锁定：
   ```bash
-  python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o out.png
+  python3 bayer_pipeline.py experiments/data/bayer_verify/frame_000_640x480.raw -o out.png
   # 期望: region_replaced=430, dead_replaced=111
   ```
-- ✅ **R 版管线 `bayer_pipeline.R`**（§10.6）：与 Python 版逐像素等价的全链路重现
-  （位序解码/区域/死点修复/分相位渲染/CLI 参数一致），仅依赖 R base + `png` 包：
+  COM15=0xC0 帧（8-bit 全位独立）：`--no-fix-region --no-fix-dead` 跳过缺陷修复。
+  CFA 默认 upper=GRBG, lower=BGGR（经 G-channel 一致性验证）：
   ```bash
-  Rscript bayer_pipeline.R bayer_verify/frame_000_640x480.raw -o out.png
+  python3 bayer_pipeline.py experiments/data/com15_test/frame_000_640x480.raw -o out.png \
+      --no-fix-region --no-fix-dead
+  ```
+- ✅ **R 版管线 `bayer_pipeline.R`**（§10.6）：与 Python 版逐像素等价的全链路重现
+  （位序解码/区域/死点修复/分相位渲染/CLI 参数一致），仅依赖 R base + `png` 包。
+  支持 `--map old|new` 双位映射（默认 `old` 向后兼容）：
+  ```bash
+  Rscript experiments/scripts/bayer_pipeline.R experiments/data/bayer_verify/frame_000_640x480.raw -o out.png
   # 期望: region_replaced=430, dead_replaced=111
+  # 08-16 更换的芯片 (b2 取代 b1 成为 MSB) 用 --map new
+  Rscript experiments/scripts/bayer_pipeline.R experiments/data/outdir_264657a/frame_000_640x480.raw -o out.png --map new
   ```
   交叉验证：R vs Python 同参数复现 92.2 万像素中仅 40 像素差 ≤3（浮点舍入），
   G 通道与无修复模式逐像素 0 差异。
@@ -221,8 +230,15 @@ python3 live_view.py --demosaic --frames 6
 ├── bayer_capture.py    # raw bayer 采集 CLI + 纯函数层（缝合/窗口编码/CFA 均值）
 ├── bayer_demosaic.py   # 拜耳去马赛克 + BMP
 ├── bayer_pipeline.py   # 取证管线（位序解码 + 区域/死点缺陷修复 + 分相位渲染，§10.6）
-├── bayer_pipeline.R    # 取证管线 R 版（与 Python 版逐像素等价，交叉验证 §10.6）
 ├── verify_frame.py     # 帧数据校验工具
+├── experiments/        # 实验代码与产物（取证脚本 + 采集数据）
+│   ├── scripts/
+│   │   ├── bayer_pipeline.R   # 取证管线 R 版（双位映射 old|new，交叉验证 §10.6）
+│   │   ├── decode_hypo.py     # 解码假设直接对比（OLD/NEW 映射裁决）
+│   │   ├── raw_forensic.py    # 逐位/位对/列相关/穷举取证
+│   │   ├── rgb565_bitlevel.py # RGB565 位级统计（排除接线/电气缺陷）
+│   │   └── sweep_frames.py    # 全帧 verdict 一致性表
+│   └── data/                  # 采集产物（bayer_verify / bayer_out / bayer_out_prefix / outdir_* / com15_test）
 ├── docs/
 │   ├── OV7670_RP2040_REFERENCE.md
 │   ├── RAW_BAYER_OPERATION_MATH.md   # raw bayer 实验主线（T1–T7 结论 + 8 组寄存器配置 A/B + §10 归档）

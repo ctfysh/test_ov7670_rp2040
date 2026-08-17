@@ -13,6 +13,7 @@ bayer_out/
 bayer_out_fixed/
 bayer_out_prefix/
 bayer_verify/
+experiments/data/
 __pycache__/
 *.pyc
 

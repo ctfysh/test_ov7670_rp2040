@@ -362,7 +362,7 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x11, 0x01}, // CLKRC: OFFICIAL 0x01 (Table 2-2; 24 MHz input reference)
     {0x6b, 0x0a}, // DBLV: PLL bypass (kept from shipped table)
     {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
-    {0x40, 0xd0}, // COM15: full 0-255 range
+    {0x40, 0xc0}, // COM15: full 0-255 range, RGB565 OFF (test D7==D0 independence)
     {0x1e, 0x07}, // MVFP: no mirror/vflip (matches shipped)
     {0x0c, 0x00}, // COM3: OFFICIAL 0x00 (= shipped)
     {0x3e, 0x00}, // COM14: OFFICIAL 0x00 (shipped: 0x18)
@@ -418,7 +418,7 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x11, 0x80}, // CLKRC: fINT = XCLK/2 (verified 20.8 MHz PWM build)
     {0x6b, 0x0a}, // DBLV: PLL bypass
     {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
-    {0x40, 0xd0}, // COM15: full 0-255 range
+    {0x40, 0xc0}, // COM15: full 0-255 range, RGB565 OFF (test D7==D0 independence)
     {0x1e, 0x07}, // MVFP: no mirror/vflip (matches RGB565 path)
     {0x0c, 0x00}, // COM3
     {0x3e, 0x18}, // COM14: bit4+bit3 open the 0x73 gate; bits[2:0]=000 PCLK /1
@@ -505,6 +505,13 @@ int ov7670_set_bayer_window(uint8_t half) {
   if (ov7670_write_reg(OV7670_REG_VSTART, vstart) != 0) return -1;
   if (ov7670_write_reg(OV7670_REG_VSTOP, vstop) != 0) return -1;
   if (ov7670_write_reg(OV7670_REG_VREF, vref) != 0) return -1;
+
+  // Re-lock AGC+AEC after window switch: TSLB + VSTART/VSTOP/VREF writes may
+  // trigger a partial re-expose.  COM8=0xE1 clears AGC(bit2)+AEC(bit1) while
+  // keeping FASTAEC|AECSTEP|BANDING|AWB — GAIN/AECH stay frozen at the values
+  // that converged during init, so both halves share one locked exposure.
+  if (ov7670_write_reg(OV7670_REG_COM8, 0xE1) != 0) return -1;
+
   sleep_us(200);
 
   return 0;

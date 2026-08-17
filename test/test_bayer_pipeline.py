@@ -25,7 +25,7 @@ if _ROOT not in sys.path:
 import bayer_pipeline as bp  # noqa: E402  真实管线实现
 
 # 采集验证帧 (若存在): 缺陷区 x502-516 (region_cols), 修复检查 y60-160
-_FRAME = os.path.join(_ROOT, "bayer_verify", "frame_000_640x480.raw")
+_FRAME = os.path.join(_ROOT, "experiments", "data", "bayer_verify", "frame_000_640x480.raw")
 _REGION_COLS = range(502, 517)
 _REGION_Y = (60, 160)
 _REGION_THRESH = 55.0

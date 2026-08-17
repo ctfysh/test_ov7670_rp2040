@@ -2,21 +2,16 @@
 """OV7670 Raw Bayer 处理管线 (bayer_pipeline.py)
 
 把本项目实验得到的完整取证结论固化为可复用的纯函数管线:
-  g_map                  : 6-bit 位序解码 (b1=MSB, 序 (1,7,6,5,4,3)) -> 0..252
   fix_dead_pixels        : 散点死点修复 (同色 4-邻域中值, 差>阈 替换)
   fix_defect_region      : 楔形区域缺陷修复 (带外同相位参考插值, 逐像素判定)
   render_stitched        : 上/下半窗分相位去马赛克 + 拼接 + WB + 伽马 -> PNG
 
-取证结论 (docs/ 记录, 本文件固化):
-- 位序: 原始字节 v=129*b7+64*b6+32*b5+16*b4+8*b3+2*b1, b0==b7, b2≈噪声;
-  g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3, b1 为真 MSB (空间相关 0.863 最高、
-  空间连续性 0.670 最高、邻列 MAD 42.7 < 原始字节 70.4)。
-- 相位: 上下半窗是独立采集帧, 上窗实际起始行 15 (奇行) -> BGGR;
-  下窗起始行 252 (偶行) -> GRBG。重叠行 corr 0.995-0.998, 拼接缝亮度比 1.005。
-- 白平衡: 灰度世界 R 增益 2.15, B 增益 1.35; 用户偏好 B 再 ×0.93 (降蓝)。
-- 伽马: 0.85 提亮。
-- 粉区缺陷: frame_000 上窗 x503-515, y80-134 楔形块 (偶列飙 204-228, 奇列
-  暴跌 12-24), 带外同相位参考偏差>55 逐像素替换 (保留其余原始数据)。
+解码模式:
+- COM15=0xC0 (当前): 8-bit 全独立, raw 直通, 不需要 g_map。
+- COM15=0xD0 (旧): 6-bit 有效 (bit0==bit7 镜像, bit2 噪声), 需要 g_map 解码。
+  旧模式向后兼容: pipeline(..., use_gmap=True, map="old"|"new")。
+
+相位: 上下窗均 BGGR (COM15=0xC0 后全帧 CFA pattern 一致)
 
 CLI 在 main() 内, __main__ 守卫 -> 纯函数层可被 unittest import。
 """
@@ -28,10 +23,14 @@ import numpy as np
 from bayer_demosaic import demosaic_bayer
 
 
-def g_map(v):
-    """6-bit 位序解码: g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3 (0..252, 4 的倍数)。
+def g_map(v, map="old"):
+    """6-bit 位序解码: 0..252, 4 的倍数。
 
-    输入 uint8 ndarray (原始字节), 输出同形状 uint8。b1 为真 MSB。
+    map="old" (08-14 芯片): g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3, b1 为 MSB。
+    map="new" (08-16 更换的芯片): g(v)=128*b2+64*b7+32*b6+16*b5+8*b4+4*b3, b2 为 MSB
+      (raw 通路位映射为芯片个体差异: 换摄像头后 b2 取代 b1 成为最高位)。
+
+    输入 uint8 ndarray (原始字节), 输出同形状 uint8。
     """
     v = v.astype(np.uint16)
     b7 = (v >> 7) & 1
@@ -39,8 +38,8 @@ def g_map(v):
     b5 = (v >> 5) & 1
     b4 = (v >> 4) & 1
     b3 = (v >> 3) & 1
-    b1 = (v >> 1) & 1
-    return (128 * b1 + 64 * b7 + 32 * b6 + 16 * b5 + 8 * b4 + 4 * b3).astype(np.uint8)
+    msb = ((v >> 2) & 1) if map == "new" else ((v >> 1) & 1)
+    return (128 * msb + 64 * b7 + 32 * b6 + 16 * b5 + 8 * b4 + 4 * b3).astype(np.uint8)
 
 
 def fix_dead_pixels(cfa, threshold=60.0, skip=None):
@@ -114,7 +113,7 @@ def fix_defect_region(cfa, region_cols, y_lo, y_hi, threshold=55.0):
     return cfa, replaced, count
 
 
-def render_stitched(cfa, upper_pattern="BGGR", lower_pattern="GRBG",
+def render_stitched(cfa, upper_pattern="GRBG", lower_pattern="BGGR",
                     r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
     """上/下半窗分相位去马赛克 -> vstack 拼接 -> 灰度世界 WB -> 伽马, 返回
     (h,w,3) uint8 RGB。
@@ -138,15 +137,18 @@ def render_stitched(cfa, upper_pattern="BGGR", lower_pattern="GRBG",
     return img.astype(np.uint8)
 
 
-def pipeline(raw, region_cols=range(502, 517), region_y=(60, 160),
-             dead_threshold=60.0, region_threshold=55.0, fix_region=True,
-             fix_dead=True, upper_pattern="BGGR", lower_pattern="GRBG",
-             r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
-    """完整管线: 位序解码 -> 楔形区域修复 -> 散点死点修复 -> 渲染。
+def pipeline(raw, use_gmap=False, map="old", region_cols=range(502, 517),
+             region_y=(60, 160), dead_threshold=60.0, region_threshold=55.0,
+             fix_region=True, fix_dead=True, upper_pattern="GRBG",
+             lower_pattern="BGGR", r_gain=None, b_gain=None, gamma=0.85,
+             b_extra=0.93):
+    """完整管线: [可选 g_map] -> 楔形区域修复 -> 散点死点修复 -> 渲染。
 
-    raw: 480x640 uint8 原始字节。返回 (rgb, 修复统计 dict)。
+    raw: 480x640 uint8 原始字节。
+    use_gmap: True 时先做 6-bit 位序解码 (旧 COM15=0xD0 模式), False 直通。
+    返回 (rgb, 修复统计 dict)。
     """
-    cfa = g_map(raw).astype(np.float64)
+    cfa = g_map(raw, map).astype(np.float64) if use_gmap else raw.astype(np.float64)
     stats = {}
     replaced = np.zeros(cfa.shape, dtype=bool)
     # 1. 区域缺陷修复 (先于死点, 其替换区由 skip 保护)
@@ -173,6 +175,11 @@ def main(argv=None):
                    help="跳过楔形区域缺陷修复 (保留原始数据)")
     p.add_argument("--no-dead-fix", action="store_true",
                    help="跳过散点死点修复")
+    p.add_argument("--use-gmap", action="store_true",
+                   help="启用 6-bit 位序解码 (旧 COM15=0xD0 模式)")
+    p.add_argument("--map", choices=["old", "new"], default="old",
+                   help="位映射: old=b1 MSB (08-14 芯片), new=b2 MSB "
+                        "(08-16 更换的芯片) (默认 %(default)s)")
     p.add_argument("--region-cols", default="502-516",
                    help="疑似缺陷列区间, 如 '502-516' (默认 %(default)s)")
     p.add_argument("--region-y", default="60-160",
@@ -202,7 +209,8 @@ def main(argv=None):
 
     raw = np.fromfile(args.input, dtype=np.uint8).reshape(480, 640)
     rgb, stats = pipeline(
-        raw, region_cols=region_cols, region_y=region_y,
+        raw, use_gmap=args.use_gmap, map=args.map,
+        region_cols=region_cols, region_y=region_y,
         dead_threshold=args.dead_threshold,
         region_threshold=args.region_threshold,
         fix_region=not args.no_region_fix, fix_dead=not args.no_dead_fix,
