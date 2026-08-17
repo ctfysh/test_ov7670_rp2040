@@ -5,18 +5,15 @@
   g_map                  : 6-bit 位序解码 (b1=MSB, 序 (1,7,6,5,4,3)) -> 0..252
   fix_dead_pixels        : 散点死点修复 (同色 4-邻域中值, 差>阈 替换)
   fix_defect_region      : 楔形区域缺陷修复 (带外同相位参考插值, 逐像素判定)
-  render_stitched        : 上/下半窗分相位去马赛克 + 拼接 + WB + 伽马 -> PNG
+  render                 : 去马赛克 + WB + 伽马 -> PNG
 
 取证结论 (docs/ 记录, 本文件固化):
 - 位序: 原始字节 v=129*b7+64*b6+32*b5+16*b4+8*b3+2*b1, b0==b7, b2≈噪声;
   g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3, b1 为真 MSB (空间相关 0.863 最高、
   空间连续性 0.670 最高、邻列 MAD 42.7 < 原始字节 70.4)。
-- 相位: 上下半窗是独立采集帧, 上窗实际起始行 15 (奇行) -> BGGR;
-  下窗起始行 252 (偶行) -> GRBG。重叠行 corr 0.995-0.998, 拼接缝亮度比 1.005。
-- 白平衡: 灰度世界 R 增益 2.15, B 增益 1.35; 用户偏好 B 再 ×0.93 (降蓝)。
+- 240x320 模式: every-2nd-PCLK 采集, 每行 320 字节, RGGB 拜耳格式。
+- 白平衡: 灰度世界 R/B 增益。
 - 伽马: 0.85 提亮。
-- 粉区缺陷: frame_000 上窗 x503-515, y80-134 楔形块 (偶列飙 204-228, 奇列
-  暴跌 12-24), 带外同相位参考偏差>55 逐像素替换 (保留其余原始数据)。
 
 CLI 在 main() 内, __main__ 守卫 -> 纯函数层可被 unittest import。
 """
@@ -114,23 +111,18 @@ def fix_defect_region(cfa, region_cols, y_lo, y_hi, threshold=55.0):
     return cfa, replaced, count
 
 
-def render_stitched(cfa, upper_pattern="BGGR", lower_pattern="GRBG",
-                    r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
-    """上/下半窗分相位去马赛克 -> vstack 拼接 -> 灰度世界 WB -> 伽马, 返回
-    (h,w,3) uint8 RGB。
+def render(cfa, pattern="RGGB", r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
+    """去马赛克 -> 灰度世界 WB -> 伽马, 返回 (h,w,3) uint8 RGB。
 
-    cfa: 拼接后 480x640 CFA (行 0..239 上窗, 240..479 下窗)。
-    r_gain/b_gain 缺省时按全帧灰度世界自动计算 (R/B 增益使 R/G=B/G=1)。
-    b_extra: 用户偏好的额外降蓝系数 (叠在灰度世界 B 增益上)。
+    cfa: 240x320 CFA (uint8 或 float64)。r_gain/b_gain 缺省时按全帧灰度世界
+    自动计算 (R/B 增益使 R/G=B/G=1)。b_extra: 用户偏好的额外降蓝系数。
     """
-    up = demosaic_bayer(cfa[:240].astype(np.uint8), upper_pattern).astype(np.float64)
-    lo = demosaic_bayer(cfa[240:].astype(np.uint8), lower_pattern).astype(np.float64)
-    stitched = np.vstack([up, lo])
+    rgb = demosaic_bayer(cfa.astype(np.uint8), pattern).astype(np.float64)
     if r_gain is None:
-        r_gain = stitched[:, :, 1].mean() / stitched[:, :, 0].mean()
+        r_gain = rgb[:, :, 1].mean() / rgb[:, :, 0].mean()
     if b_gain is None:
-        b_gain = stitched[:, :, 1].mean() / stitched[:, :, 2].mean()
-    img = stitched.copy()
+        b_gain = rgb[:, :, 1].mean() / rgb[:, :, 2].mean()
+    img = rgb.copy()
     img[:, :, 0] *= r_gain
     img[:, :, 2] *= b_gain * b_extra
     img = np.clip(img, 0, 255)
@@ -140,11 +132,11 @@ def render_stitched(cfa, upper_pattern="BGGR", lower_pattern="GRBG",
 
 def pipeline(raw, region_cols=range(502, 517), region_y=(60, 160),
              dead_threshold=60.0, region_threshold=55.0, fix_region=True,
-             fix_dead=True, upper_pattern="BGGR", lower_pattern="GRBG",
+             fix_dead=True, pattern="RGGB",
              r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
     """完整管线: 位序解码 -> 楔形区域修复 -> 散点死点修复 -> 渲染。
 
-    raw: 480x640 uint8 原始字节。返回 (rgb, 修复统计 dict)。
+    raw: 240x320 uint8 原始字节。返回 (rgb, 修复统计 dict)。
     """
     cfa = g_map(raw).astype(np.float64)
     stats = {}
@@ -159,15 +151,14 @@ def pipeline(raw, region_cols=range(502, 517), region_y=(60, 160),
         cfa, stats["dead_replaced"] = fix_dead_pixels(
             cfa, dead_threshold, skip=replaced)
     # 3. 渲染
-    rgb = render_stitched(cfa, upper_pattern, lower_pattern,
-                          r_gain, b_gain, gamma, b_extra)
+    rgb = render(cfa, pattern, r_gain, b_gain, gamma, b_extra)
     return rgb, stats
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="OV7670 raw Bayer 取证管线: 位序解码 + 缺陷修复 + 渲染 PNG")
-    p.add_argument("input", help="480x640 raw 字节文件")
+    p.add_argument("input", help="240x320 raw 字节文件")
     p.add_argument("-o", "--output", required=True, help="输出 PNG")
     p.add_argument("--no-region-fix", action="store_true",
                    help="跳过楔形区域缺陷修复 (保留原始数据)")
@@ -181,6 +172,7 @@ def main(argv=None):
                    help="死点判定阈值 (默认 %(default)s)")
     p.add_argument("--region-threshold", type=float, default=55.0,
                    help="区域缺陷判定阈值 (默认 %(default)s)")
+    p.add_argument("--pattern", default="RGGB", help="CFA 模式 (默认 %(default)s)")
     p.add_argument("--r-gain", type=float, default=None,
                    help="R 增益 (默认全帧灰度世界)")
     p.add_argument("--b-gain", type=float, default=None,
@@ -200,12 +192,13 @@ def main(argv=None):
     region_cols, _ = _parse_range(args.region_cols, "region-cols")
     _, region_y = _parse_range(args.region_y, "region-y")
 
-    raw = np.fromfile(args.input, dtype=np.uint8).reshape(480, 640)
+    raw = np.fromfile(args.input, dtype=np.uint8).reshape(240, 320)
     rgb, stats = pipeline(
         raw, region_cols=region_cols, region_y=region_y,
         dead_threshold=args.dead_threshold,
         region_threshold=args.region_threshold,
         fix_region=not args.no_region_fix, fix_dead=not args.no_dead_fix,
+        pattern=args.pattern,
         r_gain=args.r_gain, b_gain=args.b_gain,
         gamma=args.gamma, b_extra=args.b_extra)
 

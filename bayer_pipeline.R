@@ -6,19 +6,14 @@
 #   fix_dead_pixels        : 散点死点修复 (同色 4-邻域中值, 差>阈 替换)
 #   fix_defect_region      : 楔形区域缺陷修复 (带外同相位参考插值, 逐像素判定)
 #   demosaic_bayer         : 双线性 G-first + G 校正去马赛克 (valid-mask, 无 padding)
-#   render_stitched        : 上/下半窗分相位去马赛克 + 拼接 + WB + 伽马
+#   render                 : 去马赛克 + WB + 伽马
 #   pipeline               : 完整管线 -> RGB 数组 + 修复统计
 #
-# 取证结论 (docs/RAW_BAYER_OPERATION_MATH.md §10.6, 与 Python 版一致):
-# - 位序: b1 为真 MSB, g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3
-# - 相位: 上窗 BGGR, 下窗 GRBG; 灰度世界 R 增益 2.15, B 增益 1.35, 用户偏好 B*0.93
-# - 伽马 0.85 提亮
-# - 粉区缺陷: frame_000 上窗 x503-515, y60-160 楔形块, 带外同相位参考偏差>55 替换
+# 240x320 模式: every-2nd-PCLK 采集, 每行 320 字节, RGGB 拜耳格式。
 #
 # 用法 (与 Python CLI 等价):
 #   Rscript bayer_pipeline.R input.raw -o out.png
 #   Rscript bayer_pipeline.R input.raw -o out.png --no-region-fix --no-dead-fix
-#   Rscript bayer_pipeline.R input.raw -o out.png --region-cols 502-516 --region-y 60-160
 
 suppressPackageStartupMessages(library(png))  # writePNG
 
@@ -189,33 +184,30 @@ fix_dead_pixels <- function(cfa, threshold = 60.0, skip = NULL) {
     list(cfa = cfa, count = count)
 }
 
-# --- 上/下半窗分相位去马赛克 -> 拼接 -> 灰度世界 WB -> 伽马, 返回 (480,640,3) 0..255 ---
-render_stitched <- function(cfa, upper_pattern = "BGGR", lower_pattern = "GRBG",
-                            r_gain = NULL, b_gain = NULL,
-                            gamma = 0.85, b_extra = 0.93) {
-    up <- demosaic_bayer(cfa[1:240, , drop = FALSE], upper_pattern) + 0.0
-    lo <- demosaic_bayer(cfa[241:480, , drop = FALSE], lower_pattern) + 0.0
-    stitched <- array(0, dim = c(480, 640, 3))
-    stitched[1:240, , ] <- up
-    stitched[241:480, , ] <- lo
-    if (is.null(r_gain)) r_gain <- mean(stitched[, , 2]) / mean(stitched[, , 1])
-    if (is.null(b_gain)) b_gain <- mean(stitched[, , 2]) / mean(stitched[, , 3])
-    img <- stitched
+# --- 去马赛克 -> 灰度世界 WB -> 伽马, 返回 (h,w,3) 0..255 ---
+render <- function(cfa, pattern = "RGGB", r_gain = NULL, b_gain = NULL,
+                   gamma = 0.85, b_extra = 0.93) {
+    h <- nrow(cfa)
+    w <- ncol(cfa)
+    rgb <- demosaic_bayer(cfa, pattern) + 0.0
+    if (is.null(r_gain)) r_gain <- mean(rgb[, , 2]) / mean(rgb[, , 1])
+    if (is.null(b_gain)) b_gain <- mean(rgb[, , 2]) / mean(rgb[, , 3])
+    img <- rgb
     img[, , 1] <- img[, , 1] * r_gain
     img[, , 3] <- img[, , 3] * b_gain * b_extra
-    img[, , 1] <- pmin(255, pmax(0, img[, , 1]))   # 逐通道 clip, 保持 array 形状
+    img[, , 1] <- pmin(255, pmax(0, img[, , 1]))
     img[, , 2] <- pmin(255, pmax(0, img[, , 2]))
     img[, , 3] <- pmin(255, pmax(0, img[, , 3]))
     img <- 255 * (img / 255)^gamma
-    floor(img)                   # 模拟 numpy astype(uint8) 截断
+    floor(img)
 }
 
 # --- 完整管线: 位序解码 -> 楔形区域修复 -> 散点死点修复 -> 渲染 ---
-# raw: 480x640 整数矩阵 (原始字节)。返回 list(rgb=, stats=)
+# raw: 240x320 整数矩阵 (原始字节)。返回 list(rgb=, stats=)
 pipeline <- function(raw, region_cols = 502:516, region_y = c(60, 160),
                      dead_threshold = 60.0, region_threshold = 55.0,
                      fix_region = TRUE, fix_dead = TRUE,
-                     upper_pattern = "BGGR", lower_pattern = "GRBG",
+                     pattern = "RGGB",
                      r_gain = NULL, b_gain = NULL, gamma = 0.85, b_extra = 0.93) {
     cfa <- g_map(raw) + 0.0
     stats <- list()
@@ -232,7 +224,7 @@ pipeline <- function(raw, region_cols = 502:516, region_y = c(60, 160),
         cfa <- res2$cfa
         stats$dead_replaced <- as.integer(res2$count)
     }
-    rgb <- render_stitched(cfa, upper_pattern, lower_pattern, r_gain, b_gain, gamma, b_extra)
+    rgb <- render(cfa, pattern, r_gain, b_gain, gamma, b_extra)
     list(rgb = rgb, stats = stats)
 }
 
@@ -280,12 +272,12 @@ main <- function(argv) {
     r_gain <- if (is.na(r_gain_str)) NULL else as.numeric(r_gain_str)
     b_gain <- if (is.na(b_gain_str)) NULL else as.numeric(b_gain_str)
 
-    # 读 raw: 480x640 字节, 行主序
+    # 读 raw: 240x320 字节, 行主序
     con <- file(input, "rb")
     on.exit(close(con))
-    bytes <- readBin(con, "raw", n = 480 * 640)
-    if (length(bytes) < 480 * 640) stop(sprintf("%s: %d B < 需要 %d B (480x640)", input, length(bytes), 480 * 640), call. = FALSE)
-    raw <- matrix(as.integer(bytes[1:(480 * 640)]), nrow = 480, ncol = 640, byrow = TRUE)
+    bytes <- readBin(con, "raw", n = 240 * 320)
+    if (length(bytes) < 240 * 320) stop(sprintf("%s: %d B < 需要 %d B (240x320)", input, length(bytes), 240 * 320), call. = FALSE)
+    raw <- matrix(as.integer(bytes[1:(240 * 320)]), nrow = 240, ncol = 320, byrow = TRUE)
 
     res <- pipeline(raw, region_cols = rc$cols, region_y = ry$y,
                     dead_threshold = dead_threshold, region_threshold = region_threshold,
