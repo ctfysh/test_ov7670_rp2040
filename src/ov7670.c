@@ -418,7 +418,7 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x11, 0x80}, // CLKRC: fINT = XCLK/2 (verified 20.8 MHz PWM build)
     {0x6b, 0x0a}, // DBLV: PLL bypass
     {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
-    {0x40, 0xd0}, // COM15: full 0-255 range
+    {0x40, 0xc0}, // COM15: full 0-255 range (no RGB565 bit — fixes D7=D0 defect)
     {0x1e, 0x07}, // MVFP: no mirror/vflip (matches RGB565 path)
     {0x0c, 0x00}, // COM3
     {0x3e, 0x18}, // COM14: bit4+bit3 open the 0x73 gate; bits[2:0]=000 PCLK /1
@@ -507,5 +507,37 @@ int ov7670_set_bayer_window(uint8_t half) {
   if (ov7670_write_reg(OV7670_REG_VREF, vref) != 0) return -1;
   sleep_us(200);
 
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 320x240 centered window (single-window, no 'T' switching)
+// ---------------------------------------------------------------------------
+
+// Set a 320x240 window centered in the 640x480 sensor.
+// Horizontal: 320 pixels centered in 640 = offset 160 from left
+//   HSTART=0x25 (160/4=40), HSTOP=0x4D (480/4=120), HREF[2:0]=0, HREF[5:3]=0
+// Vertical: 240 pixels centered in 480 = offset 120 from top
+//   VSTART=0x1E (120/4=30), VSTOP=0x5A (360/4=90), VREF_lo=0x00
+int ov7670_set_bayer_window_320x240(void) {
+  if (ov7670_write_reg(OV7670_REG_TSLB, 0x00) != 0) return -1;
+
+  // Horizontal: full 320px width (HSTART=0x11, HSTOP=0x61, HREF=0x80)
+  //   HSTRT=(0x11<<2)|0=68, HSTOP=(0x61<<2)|0=388, width=320
+  if (ov7670_write_reg(0x17, 0x11) != 0) return -1;
+  if (ov7670_write_reg(0x18, 0x61) != 0) return -1;
+  if (ov7670_write_reg(0x32, 0x80) != 0) return -1;
+
+  // Vertical: center 240px in 480px sensor
+  //   VSTRT=(0x1E<<2)|0=120, VSTOP=(0x5A<<2)|0=360, rows 120..359
+  uint8_t vref = 0;
+  if (ov7670_read_reg(OV7670_REG_VREF, &vref) != 0) return -1;
+  vref = (uint8_t)((vref & 0xF0) | 0x00);
+
+  if (ov7670_write_reg(OV7670_REG_VSTART, 0x1E) != 0) return -1;
+  if (ov7670_write_reg(OV7670_REG_VSTOP, 0x5A) != 0) return -1;
+  if (ov7670_write_reg(OV7670_REG_VREF, vref) != 0) return -1;
+
+  sleep_us(200);
   return 0;
 }

@@ -3,7 +3,7 @@
 
 在真实 YD-RP2040 + OV7670 上验证 RAW_BAYER 固件 (CAM2 帧协议) 的可观测面:
 
-  1. 'R' 寄存器回读 (DBG1+0xFB): COM7=0x01 (sensor raw), COM15=0xD0,
+  1. 'R' 寄存器回读 (DBG1+0xFB): COM7=0x01 (sensor raw), COM15=0xC0,
      PID=0x76, 窗口/缩放寄存器 = 全窗值 —— 且在任何 'T' 之前断言 (test_01)
   2. CAM2 帧流: 'T' upper 切换 ack (DBG1+0xF9+0x00), 帧头 W/H=640×240,
      载荷 153600 B, 统计特征 = 真实图像 (非全零/伪数据)
@@ -59,7 +59,7 @@ EXPECTED_REGS_SHIPPED = {
     0x0A: 0x76,  # PID          OV7670
     0x0B: 0x73,  # VER
     0x12: 0x01,  # COM7         sensor raw 8-bit Bayer out
-    0x40: 0xD0,  # COM15        full 0-255 range
+    0x40: 0xC0,  # COM15        full 0-255 range (no RGB565 — fixes D7=D0)
     0x11: 0x80,  # CLKRC 20.8 MHz build (fINT=XCLK/2; Table 2-2 0x01 targets 24 MHz)
     0x6B: 0x0A,  # DBLV         PLL
     0x1E: 0x07,  # MVFP         无翻转
@@ -83,7 +83,7 @@ EXPECTED_REGS_OFFICIAL = {
     0x0A: 0x76,  # PID          OV7670
     0x0B: 0x73,  # VER
     0x12: 0x01,  # COM7         sensor raw 8-bit Bayer out
-    0x40: 0xD0,  # COM15        full 0-255 range
+    0x40: 0xD0,  # COM15        full 0-255 range (official table keeps RGB565 bit)
     0x11: 0x01,  # CLKRC        official Table 2-2 Sheet 3 (24 MHz input ref)
     0x6B: 0x0A,  # DBLV         PLL
     0x1E: 0x07,  # MVFP         无翻转

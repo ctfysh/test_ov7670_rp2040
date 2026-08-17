@@ -156,6 +156,10 @@ int ov7670_init_raw_bayer(void);
 // Returns 0 on success, -1 on invalid half or SCCB failure.
 int ov7670_set_bayer_window(uint8_t half);
 
+// Set a 320x240 window centered in the 640x480 sensor (single-window mode).
+// Returns 0 on success.
+int ov7670_set_bayer_window_320x240(void);
+
 #ifdef __cplusplus
 }
 #endif

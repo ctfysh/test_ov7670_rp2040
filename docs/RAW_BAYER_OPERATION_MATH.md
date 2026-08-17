@@ -130,7 +130,7 @@ USB CDC (Serial) ◀── loop() 发送 "CAM1"/"CAM2" + W/H + 载荷 ◀─┘
 | 寄存器 | 值 | 含义 |
 |---|---|---|
 | COM7 (0x12) | 0x01 | sensor raw（8-bit Bayer） |
-| COM15 (0x40) | 0xD0 | 全 0–255 输出范围 |
+| COM15 (0x40) | 0xC0 | 全 0–255 输出范围（去掉 RGB565 位，修复 D7=D0 缺陷） |
 | CLKRC (0x11) | 0x80 | fINT = XCLK/2（20.83 MHz 构建） |
 | DBLV (0x6B) | 0x0A | PLL |
 | MVFP (0x1E) | 0x07 | 不翻转 |
@@ -417,6 +417,40 @@ PIO 程序改为**每 2 个 PCLK 上升沿采样一次**（camera.pio 6 指令�
 8 组配置都无效说明这些寄存器**既不致病也不治病**；但保持当前值
 （缩放旁路、与 RGB565 路径一致）能保证两条路径行为一致，且
 test_01 回读断言它们——任何未来改动必须同步更新测试。
+
+### 6.7 D7=D0 缺陷：COM15 RGB565 位在 raw 模式下的硬件副作用（2026-08-17）
+
+**缺陷签名**：raw Bayer 数据中，每个字节的 D7（MSB）**恒等于** D0（LSB）：
+
+$$I(y, x)[7] = I(y, x)[0] \quad \forall\ y, x \quad \Rightarrow \quad \text{d7\_eq\_d0} = 1.000$$
+
+- 有效位深降至 **7 bit**（D[6:1] 独立，D0 锁定 D7）
+- `test_320x240.raw` 76,800 字节逐位分析：D7==D0 = 76800/76800 = **1.000**
+- 值域 0–251 覆盖看似完整，但仅 128 个独立灰度级（D0 无信息量）
+
+**根因**：COM15 寄存器（0x40）的 bit4（RGB565 使能位）在 raw 模式
+（COM7=0x01, COM7[2]=0）下本应是 don't-care——但 OV7670 硬件实际上
+将该位用于内部输出格式控制，导致 D0 被绑定到 D7。
+
+**诊断实验**（2026-08-17，设备实测）：
+
+| COM15 | 值 | D7==D0 | D0 独立性 | 有效位深 |
+|---|---|---|---|---|
+| 0xD0（旧，含 RGB565 位） | `0xC0 \| 0x10` | **1.000** | 锁定 D7 | 7 bit |
+| 0xC0（新，仅 full range） | `0xC0` | **0.504** | 独立 (48.4%) | **8 bit** |
+
+**修复**：`ov7670.c` shipped raw bayer 寄存器表 `{0x40, 0xd0}` → `{0x40, 0xc0}`。
+
+- 去掉 bit4（RGB565 使能），保留 bit[7:6]=11（full 0–255 范围）
+- 8 位数据完全独立，D0 不再锁定 D7
+- COM15[5:4]=00 满足 raw Bayer 判定条件（COM7[2]=0, COM15[4]=0）
+- 值域未达 255 是场景亮度/曝光所致，非位深限制
+
+**影响范围**：
+- 仅影响 `OV7670_raw_bayer_regs`（shipped 表）；`OV7670_regs`（RGB565）
+  和 `OV7670_raw_bayer_regs`（official 表）保持 0xD0 不变
+- test_01 回读断言同步更新为 0xC0
+- RGB565 路径（CAM1）完全不受影响
 
 ---
 
@@ -1094,7 +1128,7 @@ Rscript bayer_pipeline.R bayer_verify/frame_000_640x480.raw -o bayer_verify/fina
 | 0x0A | PID | 0x76 | OV7670 产品 ID |
 | 0x0B | VER | 0x73 | 版本号 |
 | 0x12 | COM7 | 0x01 | sensor raw（8-bit Bayer） |
-| 0x40 | COM15 | 0xD0 | 全 0–255 范围 |
+| 0x40 | COM15 | 0xC0 | 全 0–255 范围（去掉 RGB565 位，修复 D7=D0 缺陷） |
 | 0x15 | COM10 | live | 实时状态 |
 | 0x11 | CLKRC | 0x80 | fINT = XCLK/2（20.8 MHz PWM 构建） |
 | 0x6B | DBLV | 0x0A | PLL |

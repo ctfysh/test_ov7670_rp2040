@@ -78,7 +78,8 @@ pio run -e rpipico -t upload --upload-port /dev/cu.usbmodemXXXX
 在真实 YD-RP2040 + OV7670 上断言 RAW_BAYER 固件的 CAM2 帧协议：
 
 1. **`test_01_reg_readback_raw_bayer_mode`**：`'R'` 回读 24 寄存器，关键位证明
-   raw bayer 模式 — COM7(0x12)=0x01（sensor raw）、COM15(0x40)=0xD0、PID=0x76；
+   raw bayer 模式 — COM7(0x12)=0x01（sensor raw）、COM15(0x40)=0xC0（shipped）/
+   0xD0（official）、PID=0x76；
    **必须先于任何 `'T'` 运行**（断言的是 init 后全窗值 VSTART=0x03/VSTOP=0x7B）。
    双构建自动选择：CLKRC 回读 0x01 → official Table 2-2 构建
    （`-DRAW_BAYER_OFFICIAL_REGS`），断言 official 期望表；否则 shipped 表。

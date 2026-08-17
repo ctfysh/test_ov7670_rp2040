@@ -295,34 +295,7 @@ static uint8_t read_reg_checked(uint8_t reg) {
 #define REG_MARKER 0xFB
 
 #ifdef RAW_BAYER
-// 'T' handler (near reg_readback_send; ack: DBG1 + 0xF9 + param):
-#define WINDOW_MARKER 0xF9
-
-// 'T' + 1 param byte: 0x00=upper, 0x01=lower. Ack DBG1+0xF9+param echoes the
-// accepted param; DBG1+0xF9+0xFF = invalid param or SCCB failure. Host waits
-// ~2 frames (0.5s) after the ack before capturing the new half.
-static void bayer_window_switch(void) {
-  uint8_t param = 0xFF;
-  uint32_t t0 = millis();
-  while (Serial.available() == 0 && millis() - t0 < 50) {
-    // bounded wait for the param byte (host sends 'T' + byte back-to-back)
-  }
-  if (Serial.available() > 0) {
-    param = (uint8_t)Serial.read();
-  }
-  int ret = -1;
-  if (param == OV7670_BAYER_WINDOW_UPPER) {
-    ret = ov7670_set_bayer_window(OV7670_BAYER_WINDOW_UPPER);
-  } else if (param == OV7670_BAYER_WINDOW_LOWER) {
-    ret = ov7670_set_bayer_window(OV7670_BAYER_WINDOW_LOWER);
-  }
-  Serial.write(DBG_MAGIC0);
-  Serial.write(DBG_MAGIC1);
-  Serial.write(DBG_MAGIC2);
-  Serial.write(DBG_MAGIC3);
-  Serial.write(WINDOW_MARKER);
-  Serial.write(ret == 0 ? param : 0xFF);
-}
+// 'T' handler removed - using single 320x240 window, no half-frame switching
 #endif // RAW_BAYER
 
 static void reg_readback_send(void) {
@@ -331,7 +304,7 @@ static void reg_readback_send(void) {
       0x0A, // PID          expect 0x76 (OV7670)
       0x0B, // VER          expect 0x73
       0x12, // COM7         expect 0x01 (sensor raw)
-      0x40, // COM15        expect 0xD0 (full range)
+      0x40, // COM15        expect 0xC0 (full range, no RGB565 — fixes D7=D0)
       0x15, // COM10        live
       0x11, // CLKRC        expect 0x80 (20.8 MHz build; fINT = XCLK/2)
       0x6B, // DBLV         expect 0x0A (PLL)
@@ -598,7 +571,7 @@ void setup() {
   Serial.println("FW: main (PIO+DMA CDC)");
 #endif
 #ifdef RAW_BAYER
-  Serial.println("Mode: raw bayer 640x240 (CAM2 half-frames)");
+  Serial.println("Mode: raw bayer 320x240 (CAM2)");
 #endif
   Serial.print("Build: ");
   Serial.print(__DATE__);
@@ -633,7 +606,8 @@ void setup() {
   }
 
 #ifdef RAW_BAYER
-  ov7670_init_raw_bayer(); // full VGA window; first 'T' picks the half
+  ov7670_init_raw_bayer();
+  ov7670_set_bayer_window_320x240();
 #else
   ov7670_init();
 #endif
@@ -694,12 +668,6 @@ void loop() {
       // physical button press needed on flash-test-fix iterations).
       reset_usb_boot(0, 0);
     }
-#ifdef RAW_BAYER
-    else if (c == 'T') {
-      // Half-window switch (raw Bayer only): 'T' + 0x00/0x01. Ack DBG1+0xF9.
-      bayer_window_switch();
-    }
-#endif
   }
 
   if (!frame_ready) {
@@ -720,7 +688,7 @@ void loop() {
         // Register read-back: prove the init writes landed (a camera that
         // drops writes runs its default state: stuck VSYNC, no HREF).
         Serial.write(read_reg_checked(0x12)); // COM7 expect 0x14 (QVGA+RGB) / 0x01 (raw)
-        Serial.write(read_reg_checked(0x40)); // COM15 expect 0xD0 (RGB565 full range)
+        Serial.write(read_reg_checked(0x40)); // COM15 expect 0xC0 (full range, no RGB565 — fixes D7=D0)
         Serial.write(read_reg_checked(0x15)); // COM10 expect 0x02 / live
         Serial.write(read_reg_checked(0x11)); // CLKRC expect 0x80 (PWM) / 0x01 (raw)
         Serial.write(read_reg_checked(0x1e)); // MVFP expect 0x07 (no flip)
