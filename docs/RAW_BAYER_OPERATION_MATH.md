@@ -91,7 +91,7 @@ $$f_{\text{INT}} = \frac{f_{\text{XCLK}}}{2} \approx 10.4\ \text{MHz}$$
 ## 3. 固件架构与数据通路
 
 ```
-OV7670 ──8-bit D[0:7]──▶ PIO0 SM1 ──▶ DMA ──▶ frames[153600]
+OV7670 ──8-bit D[0:7]──▶ PIO0 SM1 ──▶ DMA ──▶ frames[76800]
           PCLK/HREF       (像素采样)        (单缓冲)      │
 VSYNC ──▶ GPIO IRQ ──▶ 触发 DMA ────────────────────────┘
                                                        ▼
@@ -1051,6 +1051,10 @@ Sheet 3 寄存器表（`-DRAW_BAYER_OFFICIAL_REGS`）做第 8 组 A/B，检验
 | 每行不同字节数 | 640 | **320**（唯一值 median 62，min 40 max 93） |
 | 帧完整性 | 640×240 153600 B | 640×240 153600 B（仍完整） |
 
+> **Note**: The above §10.5 A/B measurements used legacy 640×240 shipped config
+> and `rpipico_legacy` env. The current default build (env:rpipico) uses official
+> Table 2-2 registers + per-PCLK sampling at 320×240 (76800 B/line).
+
 - **official 配置下 'C'=640 边沿/行与 datasheet Table 3-3 吻合**，但
   per-PCLK 采样后每行**只有 320 个不同字节**（DCWCTR=0x11 HDS by 2 +
   XSC/YSC 缩放使行内不同字节减半）→ 640 边沿只承载 320 个不同字节，
@@ -1060,7 +1064,7 @@ Sheet 3 寄存器表（`-DRAW_BAYER_OFFICIAL_REGS`）做第 8 组 A/B，检验
   也只有 320 个不同字节。**shipped 配置 + every-2nd-PCLK 采样是全分辨率
   （640 不同字节/行）唯一路径**，§6.5 修复保持正确。
 - 配套：`test_05` 把 640/1280 边沿数断言进硬件测试（±3 同步竞态）；
-  test_01 按 CLKRC 回读 0x01 自动选 official 期望表；`rpipico_official`
+  test_01 按 CLKRC 回读 0x01 自动选 official 期望表；`rpipico_legacy`
   env 中 test_03 **预期失败**（dup_even=1.000 ≥ 0.9，per-PCLK 下官方配置
   本来就重复——见 test/README.md）。
 
