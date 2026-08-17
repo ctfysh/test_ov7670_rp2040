@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """OV7670 frame receiver - reads "CAM1"+W(2)+H(2)+RGB565 raw stream from USB CDC,
    saves each frame as a BMP (viewable everywhere, zero deps)."""
-import serial, struct, sys, os, time
+import serial, struct, sys, os, time, glob
 
-PORT   = '/dev/cu.usbmodem141101'
+def find_port():
+    ports = sorted(glob.glob("/dev/cu.usbmodem*"))
+    return ports[0] if ports else None
+
+PORT   = find_port() or '/dev/cu.usbmodem141101'
 OUTDIR = 'frames'
 NFRAMES = 1
 
