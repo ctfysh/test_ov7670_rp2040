@@ -3,17 +3,23 @@
 
 在真实 YD-RP2040 + OV7670 上验证 RAW_BAYER 固件 (CAM2 帧协议) 的可观测面:
 
-  1. 'R' 寄存器回读 (DBG1+0xFB): COM7=0x01 (sensor raw), COM15=0xC0,
-     PID=0x76, 窗口/缩放寄存器 = 全窗值 —— 且在任何 'T' 之前断言 (test_01)
-  2. CAM2 帧流: 'T' upper 切换 ack (DBG1+0xF9+0x00), 帧头 W/H=640×240,
-     载荷 153600 B, 统计特征 = 真实图像 (非全零/伪数据)
-  3. CFA 分离: 上/下半帧 cfa_means, 三通道均值差 >4 —— 输出确为拜耳 CFA
-  4. 缝合 + 去马赛克 + BMP: stitch_halves -> (480,640), demosaic -> RGB,
+  1. 'R' 寄存器回读 (DBG1+0xFB): COM7=0x01 (sensor raw), COM15=0xC0 (shipped)
+     或 0xD0 (official), PID=0x76, 窗口/缩放寄存器 —— 且在任何 'T' 之前断言 (test_01)
+  2. CAM2 帧流: 'T' upper 切换 ack (DBG1+0xF9+0x00), 帧头 W/H=320×240,
+     载荷 76800 B, 统计特征 = 真实图像 (非全零/伪数据)
+  3. 缝合 + 去马赛克 + BMP: stitch_halves -> (480,320), demosaic -> RGB,
      rgb_to_bmp 头/尺寸公式一致, 落盘字节与内存一致
+  4. PCLK 计数: 'C' 命令 -> ~640 PCLK/line (official config at 320×240)
 
 固件版本前提: 板上必须烧 RAW_BAYER 构建。setUpClass 用 'R' 探针读 COM7:
 COM7 != 0x01 -> 整类 SkipTest (非 raw bayer 固件)。test_hw_integration.py
 的探针相反 —— 两文件互补: 真机上跑哪套固件, 就只跑对应的一套断言。
+
+Default build (env:rpipico) = official Table 2-2 registers + per-PCLK sampling
+(DCWCTR=0x11 HDS×2 → 320 distinct bytes/line, matches FRAME_W=320).
+Legacy build (env:rpipico_legacy) = shipped寄存器 + every-2nd-PCLK sampling
+(designed for 640×480; at 320×240 outputs 640 distinct bytes/line but DMA
+captures only 320). CLKRC readback auto-detects which build is running.
 
 串口读法 (重要约束): 同 test_hw_integration.py —— 大块 read(4096) + 内部
 缓冲 + find() 滑窗同步。主机吞吐必须高于帧流, 否则 Serial.write 阻塞把
@@ -47,8 +53,8 @@ REG_MARKER = 0xFB
 WINDOW_MARKER = 0xF9
 PCLK_MARKER = 0xF8
 
-EXPECT_W, EXPECT_H = 640, 240
-EXPECT_PAYLOAD = EXPECT_W * EXPECT_H  # 153600, 1 byte/px
+EXPECT_W, EXPECT_H = 320, 240
+EXPECT_PAYLOAD = EXPECT_W * EXPECT_H  # 76800, 1 byte/px
 
 # 'R' 回读的关键寄存器 -> 期望值 (RAW_BAYER 构建, src/main.cpp 24-reg 表;
 # COM10/COM8 为 live 状态不固定断言; REG74=0x20 1x 水平缩放比 (Table 6-1);
@@ -230,14 +236,14 @@ class TestRawBayerHardware(unittest.TestCase):
         time.sleep(0.5)  # ~2 帧窗口稳定
 
     def _capture_cam2(self, timeout=15):
-        """同步 CAM2 魔数, 读帧头 + 完整 153600 B 载荷 -> (H, W) uint8。"""
+        """同步 CAM2 魔数, 读帧头 + 完整 76800 B 载荷 -> (H, W) uint8。"""
         self._sync(CAM2, timeout=8)
         hdr = self._read_exact(4, timeout=3)
         w, h = struct.unpack(">HH", hdr)
         self.assertEqual((w, h), (EXPECT_W, EXPECT_H),
                          f"CAM2 帧尺寸应为 {EXPECT_W}x{EXPECT_H}")
         raw = self._read_exact(EXPECT_PAYLOAD, timeout=timeout)
-        self.assertEqual(len(raw), EXPECT_PAYLOAD, "载荷必须完整 153600 B")
+        self.assertEqual(len(raw), EXPECT_PAYLOAD, "载荷必须完整 76800 B")
         return np.frombuffer(raw, dtype=np.uint8).reshape(h, w)
 
     # ---- 用例 (test_01 在前: 先于任何 'T' 断言全窗寄存器) ----
@@ -264,7 +270,7 @@ class TestRawBayerHardware(unittest.TestCase):
                              f"实际 0x{regs.get(reg, -1):02X}")
 
     def test_02_cam2_frame_stats(self):
-        """'T' upper -> ack; CAM2 帧头 640x240, 载荷 153600 B, 统计=真实图像。"""
+        """'T' upper -> ack; CAM2 帧头 320x240, 载荷 76800 B, 统计=真实图像。"""
         self._switch_window("upper")
         cfa = self._capture_cam2()
         raw = cfa.tobytes()
@@ -278,25 +284,11 @@ class TestRawBayerHardware(unittest.TestCase):
     def test_03_no_horizontal_duplication(self):
         """上/下半帧无水平 2x 重复 (dup_even < 0.9): 每字节必须独立采样。
 
-        T7 根因定论 (2026-08-14, measured): raw 模式 (COM7=0x01) 下每-PCLK
-        采样得到 dup_even=1.000 (字节重复), 每 2nd PCLK 采样恢复 640 个不同
-        字节 -> 解释为每个字节保持 2 个 PCLK。1280 PCLK/行已由 'C' 命令
-        (SM2 PIO 计数器) 直接计数证实 (test_05), 不再是推断值;
-        datasheet Table 6-3 的 "2 PCLK/byte" 仅属 1/2x..1/4x 缩放段
-        (REG74=0x20 => 1x => 1 PCLK/byte), 官方 raw 时序为 640 PCLK/行
-        (Table 3-3: raw PCLK=fINT/2) —— datasheet 无法解释该实测现象,
-        机制未定。八组寄存器配置实测均无法消除 dup_even=1.000
-        (XSC/YSC=0x00, PCLK_DIV=0xF0, DCWCTR=0x00, COM14=0x18, PCLK_DIV=0x08,
-        REG74=0x20, 最小表, 官方 Table 2-2 Sheet 3) -> 修复在 PIO: 每 2 个
-        PCLK 采样一次 (camera.pio 6 指令环)。实测 dup_even 1.000->0.385,
-        640 宽下 colLag2=0.426 >> colLag1=0.146 (干净 Bayer 签名), 320 重塑
-        无该签名 -> FRAME_W=640 保持。
-        旧 "DSP 水平 1/2 缩放" 假设被上述实验推翻。
-        正常内容下相邻字节是不同滤色器像元 (R-G / G-B), 只在平滑区偶发相等,
-        远低于 1.0 —— 阈值 0.9 双侧留足裕量; 全黑/全灰平场已被 test_02 的
-        >100 种取值断言前置排除。CFA 模式强证明 = test_01 COM7=0x01 回读;
-        旧版 cfa_means 三通道均值差 >4 断言随场景漂移 (灰场实测 0.34), 无法
-        区分灰度误配置与中性场景, 已废弃。
+        Default build uses official Table 2-2 registers + per-PCLK sampling.
+        DCWCTR=0x11 applies HDS×2 downsampling, producing 320 distinct bytes/line
+        that match FRAME_W=320. Per-PCLK sampling captures each once — no
+        duplication expected. Legacy shipped build (every-2nd-PCLK) was the
+        workaround for the 640×480 dup issue (T7, 2026-08-14).
         """
         self._switch_window("upper")
         upper = self._capture_cam2()
@@ -310,7 +302,7 @@ class TestRawBayerHardware(unittest.TestCase):
                             f"{dup_even:.3f} >= 0.9: 疑似 2 PCLK/byte 字节重复")
 
     def test_04_stitch_demosaic_bmp(self):
-        """缝合 (480,640) + 去马赛克 RGB + BMP 头/尺寸/落盘一致。"""
+        """缝合 (480,320) + 去马赛克 RGB + BMP 头/尺寸/落盘一致。"""
         pair = getattr(self.__class__, "pair", None)
         if pair is None:
             self._switch_window("upper")
@@ -320,34 +312,30 @@ class TestRawBayerHardware(unittest.TestCase):
         else:
             upper, lower = pair
         full = bc.stitch_halves(upper, lower)
-        self.assertEqual(full.shape, (480, 640))
+        self.assertEqual(full.shape, (480, 320))
         rgb = bd.demosaic_bayer(full)
-        self.assertEqual(rgb.shape, (480, 640, 3))
+        self.assertEqual(rgb.shape, (480, 320, 3))
         self.assertEqual(rgb.dtype, np.uint8)
-        bmp = bd.rgb_to_bmp(640, 480, rgb)
+        bmp = bd.rgb_to_bmp(320, 480, rgb)
         self.assertEqual(bmp[:2], b"BM")
-        row_size = (640 * 3 + 3) & ~3
+        row_size = (320 * 3 + 3) & ~3
         self.assertEqual(len(bmp), 54 + row_size * 480,
                          "BMP 长度 = 54 + 行填充对齐后 480 行")
         with tempfile.TemporaryDirectory() as d:
-            path = f"{d}/frame_640x480.bmp"
+            path = f"{d}/frame_320x480.bmp"
             with open(path, "wb") as f:
                 f.write(bmp)
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), bmp, "落盘 BMP 与内存字节一致")
 
     def test_05_pclk_count_per_line(self):
-        """'C': SM2 直接计数每行 PCLK 上升沿 -> ~640 或 ~1280 (T7 决定性测量)。
+        """'C': SM2 直接计数每行 PCLK 上升沿 -> ~640 (official config at 320×240)。
 
-        T7 结论里的 '1280 PCLK/line' 是推断值 (dup_even=1.000 + 640 个不同
-        字节恢复后反推), 从未被直接计数。'C' 让 SM2 运行 pclk_count 程序,
-        每个 HREF 行 push 一个 u32 BE (从 0xFFFFFFFF 倒数后的剩余计数值);
-        主机换算 edges = 0xFFFFFFFF - value:
-          640 edges/line  -> 0xFFFFFF80  (官方 Table 3-3 raw 时序)
-          1280 edges/line -> 0xFFFFFF00  (每字节保持 2 PCLK)
-        这把 '2 PCLK/byte' 从推断变成直接测量。固件要求: 必须烧带 'C' 命令
-        的新固件 (SM2 计数器, src/main.cpp pclk_count_send); 旧固件无响应
-        会导致 DBG1 同步超时 -> fail, 属预期。
+        Default build now uses official Table 2-2 registers (DCWCTR=0x11 HDS×2,
+        PCLK_DIV=0xF0) + per-PCLK sampling. The sensor outputs 640 PCLKs/line
+        with 320 distinct bytes after downsampling, matching FRAME_W=320.
+        Legacy shipped build (every-2nd-PCLK) produces 1280 PCLK/line.
+        'C' counts edges directly via SM2 PIO counter.
         """
         self.s.write(b"C")
         self.s.flush()

@@ -63,7 +63,7 @@ YD-RP2040 无 FIFO OV7670 摄像头采集，通过原生 USB CDC 输出连续 RG
 ## 工作原理
 
 ```
-OV7670 ──8-bit D[0:7]──▶ PIO0 SM1 ──▶ DMA ──▶ frames[153600]
+OV7670 ──8-bit D[0:7]──▶ PIO0 SM1 ──▶ DMA ──▶ frames[76800]
           PCLK/HREF       (像素采样)        (单缓冲)      │
 VSYNC ──▶ GPIO IRQ ──▶ 触发 DMA ────────────────────────┘
                                                        ▼
@@ -88,36 +88,34 @@ USB CDC (Serial) ◀── loop() 发送 "CAM1" + W/H + RGB565 ◀─┘
 ## Raw bayer 模式（实验）
 
 `-DRAW_BAYER` 构建把 OV7670 切到 **sensor raw 8-bit**（COM7=0x01）并输出
-VGA 640×480 拜耳 CFA 的 **上/下半帧**（各 640×240，`'T'` 命令切换窗口）：
+320×240 拜耳 CFA 的 **上/下半帧**（各 320×240，`'T'` 命令切换窗口）：
 
 ```
 "CAM2" (4 B) | W (u16 BE) | H (u16 BE) | W×H 字节原始 Bayer（1 byte/px）
 ```
 
 - **帧协议**：`bayer_capture.py` 按 `"CAM2"` 魔数滑窗同步，`'T'` 上/下半帧
-  各 153600 B，`stitch_halves` 拼回 640×480。
+  各 76800 B，`stitch_halves` 拼回 320×480。
 - **采集 CLI**（依赖 `pyserial`；纯函数层零依赖）：
   ```bash
   python3 bayer_capture.py --port /dev/cu.usbmodemXXXX --out bayer_frames --pairs 3 --bmp
   ```
   `--out`（默认 `bayer_frames/`）、`--pairs`（上/下帧对数，默认 3）、`--pattern`
-  （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 640×480 BMP）。
-- **固件开关**（`platformio.ini`）：`-DRAW_BAYER -DFRAME_W=640 -DFRAME_H=240`。
-  - 默认 `[env:rpipico]` = shipped 表 + PIO 每 2nd PCLK 采样（T7 修复，
-    全分辨率 640 不同字节/行，test 5/5）。
-  - `[env:rpipico_official]` = 官方 Table 2-2 Sheet 3 寄存器表
-    （`-DRAW_BAYER_OFFICIAL_REGS`）+ per-PCLK 采样（`-DRAW_BAYER_PER_PCLK`）——
-    第 8 组 A/B 诊断 env：'C' 直测 640 边沿/行但仅 320 不同字节/行，
-    证实 2 PCLK/byte 与寄存器配置无关（详见 `docs/RAW_BAYER_OPERATION_MATH.md`
-    §10.5）；该 env 下 `test_03` 预期失败（dup_even=1.000）。
+  （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 320×480 BMP）。
+- **固件构建**（`platformio.ini`）：
+  - 默认 `[env:rpipico]` = 官方 Table 2-2 寄存器表 + per-PCLK 采样
+    （`-DRAW_BAYER_OFFICIAL_REGS -DRAW_BAYER_PER_PCLK`）。DCWCTR=0x11
+    HDS×2 下采样产生 320 不同字节/行, 匹配 FRAME_W=320。
+  - `[env:rpipico_legacy]` = shipped 表 + PIO 每 2nd PCLK 采样（T7 修复,
+    为 640×480 设计; 在 320×240 下输出 640 不同字节/行但 DMA 仅捕获 320）。
 - ✅ `live_view.py` 已适配 raw bayer（CAM2）：自动交替发 `'T'` 收上/下半帧，
-  拼接成 **640×480 完整画面**显示（灰度默认 / `--demosaic` 彩色），
+  拼接成 **320×480 完整画面**显示（灰度默认 / `--demosaic` 彩色），
   无信号超时 2s 显示白色 NO-SIGNAL 屏；`capture.py` 仍为 RGB565（CAM1）专用。
   `test_hw_integration.py`/`test_hw_bayer.py` 通过 COM7 探针自动选择对应固件用例。
 - ✅ **取证管线 `bayer_pipeline.py`**（§10.6）：上窗楔形缺陷区（x 502–516）取证
-  与修复——位序解码 → 区域/死点缺陷修复 → 分相位渲染 → CLI 落盘。与交付版
-  `final_v8_precise.png` 一致（region_replaced=430），13 个测试锁定：
+  与修复——位序解码 → 区域/死点缺陷修复 → 分相位渲染 → CLI 落盘。13 个测试锁定：
   ```bash
+  # 以下示例使用遗留 640×480 测试数据; 当前默认构建输出 320×240
   python3 bayer_pipeline.py bayer_verify/frame_000_640x480.raw -o out.png
   # 期望: region_replaced=430, dead_replaced=111
   ```
@@ -177,7 +175,7 @@ python3 live_view.py [port] [scale] [rotate] [--demosaic] [--frames N]
 # 例：2 倍放大 + 向左旋转 90°（默认）
 python3 live_view.py            # port=自动探测, scale=2, rotate=90
 python3 live_view.py /dev/cu.usbmodem141101 2 0    # 不旋转
-# raw bayer 固件（CAM2）：自动拼接 640×480 完整画面，--demosaic 彩色，--frames 6 退出
+# raw bayer 固件（CAM2）：自动拼接 320×480 完整画面，--demosaic 彩色，--frames 6 退出
 python3 live_view.py --demosaic --frames 6
 ```
 

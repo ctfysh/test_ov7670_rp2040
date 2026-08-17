@@ -9,8 +9,11 @@
 //   loop() streams the completed frame over USB CDC (Serial)
 //
 // Frame size: QVGA 320x240 RGB565 = 153600 bytes (FRAME_W/FRAME_H in
-// platformio.ini). RAW_BAYER mode: VGA 640x480 raw Bayer 8-bit captured as
-// 640x240 half-frames (153600 bytes each), "CAM2" magic, 1 byte/px.
+// platformio.ini). RAW_BAYER mode: 320x240 raw Bayer 8-bit (1 byte/px,
+// 76800 bytes), "CAM2" magic. Default build uses official Table 2-2
+// registers + per-PCLK sampling (DCWCTR=0x11 HDS×2 → 320 distinct
+// bytes/line matches FRAME_W=320). Legacy shipped build (every-2nd-PCLK)
+// outputs 640 distinct bytes/line at 320 FRAME_W — half dropped.
 // Host protocol (matches capture.py):
 //   "CAM1" (4 B) + W (u16 BE) + H (u16 BE) + FRAME_BYTES raw RGB565.
 //   "CAM2" (4 B) + W (u16 BE) + H (u16 BE) + FRAME_BYTES raw Bayer 8-bit.
@@ -44,9 +47,9 @@
 #define SM_CAPTURE 1
 #define SM_COUNT 2 // diagnostic PCLK counter (pclk_count program, 'C' cmd)
 
-// Frame bytes: 1 byte/px in RAW_BAYER (640x240 = 153600), 2 bytes/px RGB565.
+// Frame bytes: 1 byte/px in RAW_BAYER (320x240 = 76800), 2 bytes/px RGB565.
 #ifdef RAW_BAYER
-#define FRAME_BYTES (FRAME_W * FRAME_H)     // 640*240*1 = 153600
+#define FRAME_BYTES (FRAME_W * FRAME_H)     // 320*240*1 = 76800
 #else
 #define FRAME_BYTES (FRAME_W * FRAME_H * 2) // 320*240*2 = 153600
 #endif

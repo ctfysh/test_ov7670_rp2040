@@ -84,26 +84,19 @@ pio run -e rpipico -t upload --upload-port /dev/cu.usbmodemXXXX
    双构建自动选择：CLKRC 回读 0x01 → official Table 2-2 构建
    （`-DRAW_BAYER_OFFICIAL_REGS`），断言 official 期望表；否则 shipped 表。
 2. **`test_02_cam2_frame_stats`**：`'T'` upper → ack（DBG1+0xF9+0x00）；CAM2 帧头
-   640×240、载荷完整 153600 B（1 byte/px）、统计特征 = 真实图像
+   320×240、载荷完整 76800 B（1 byte/px）、统计特征 = 真实图像
 3. **`test_03_no_horizontal_duplication`**：上/下半帧偶数/奇数列逐位相等率 < 0.9
-   —— 排除 raw 模式 2 PCLK/byte 保持造成的字节重复（T7 定论 2026-08-14:
-   八组寄存器配置均无效, 修复 = PIO 每 2nd PCLK 采样; 实测 dup_even
-   1.000→0.385）; 采集结果缓存供 test_04 复用。旧版 CFA 均值差 >4 断言随
-   场景漂移（灰场实测 0.34），已废弃 —— 模式强证明由 test_01 COM7=0x01 回读承担。
-   ⚠️ **`rpipico_official` env（per-PCLK 采样 + 官方 Table 2-2 表）下本用例
-   预期失败**（dup_even=1.000 ≥ 0.9）——per-PCLK 采样本来就重复, 官方配置
-   也只把行内不同字节从 640 减半到 320（'C' 直测 640 边沿/行, §10.5）,
-   这是 A/B 实验的一部分而非回归。
-4. **`test_04_stitch_demosaic_bmp`**：`stitch_halves` → (480,640)、`demosaic_bayer` →
+   —— 官方 Table 2-2 寄存器 + per-PCLK 采样下, DCWCTR=0x11 HDS×2 产生 320 个
+   不同字节/行, per-PCLK 采样各取一次无重复; legacy shipped 构建 (every-2nd-PCLK)
+   在 640×480 下有 dup_issue (T7, 2026-08-14), 但在 320×240 下不适用。
+   采集结果缓存供 test_04 复用。
+4. **`test_04_stitch_demosaic_bmp`**：`stitch_halves` → (480,320)、`demosaic_bayer` →
    RGB uint8、`rgb_to_bmp` 头/尺寸公式（54 + 行填充对齐后 480 行）、落盘字节与内存一致
 5. **`test_05_pclk_count_per_line`**：`'C'` 命令（PIO SM2 每 HREF 行 PCLK 上升沿
-   计数器）—— 每行边缘数 ≈640（官方 Table 3-3 raw 时序）或 ≈1280（每字节保持
-   2 PCLK），各计数行一致（±3 边沿同步竞态）。这是把 T7 的 "1280 PCLK/line"
-   从推断（dup_even + 640 不同字节反推）变成**直接测量**的决定性实验。
-   实测（2026-08-14）：shipped = **1280** 边沿/行（2 PCLK/byte 成立）；
-   `rpipico_official` = **640** 边沿/行但仅 320 个不同字节/行（官方缩放
-   配置, §10.5）。固件必须带 `'C'`（新固件）；旧固件无响应 → DBG1 同步
-   超时 fail，属预期。
+   计数器）—— 每行边缘数 ≈640（official config: DCWCTR=0x11 HDS×2 → 320 distinct
+   bytes/line, PCLK_DIV=0xF0 → 640 PCLKs/line），各计数行一致（±3 边沿同步竞态）。
+   Legacy shipped build 在 640×480 下产生 1280 PCLK/line (T7 直测)。
+   固件必须带 `'C'`（新固件）；旧固件无响应 → DBG1 同步超时 fail，属预期。
 
 ### 固件模式探针（两个硬件文件按 COM7 自选）
 
