@@ -3,11 +3,9 @@
    saves each frame as a BMP (viewable everywhere, zero deps)."""
 import serial, struct, sys, os, time
 
-PORT   = sys.argv[1] if len(sys.argv) > 1 else '/dev/cu.usbmodem141101'
-OUTDIR = sys.argv[2] if len(sys.argv) > 2 else 'frames'
-NFRAMES = int(sys.argv[3]) if len(sys.argv) > 3 else 1
-
-os.makedirs(OUTDIR, exist_ok=True)
+PORT   = '/dev/cu.usbmodem141101'
+OUTDIR = 'frames'
+NFRAMES = 1
 
 def rgb565_to_bmp(w, h, raw):
     """Convert RGB565 raw bytes -> 24-bit BMP bytes.
@@ -48,6 +46,12 @@ def read_exact(s, n, timeout=5):
     return buf
 
 def main():
+    global PORT, OUTDIR, NFRAMES
+    PORT   = sys.argv[1] if len(sys.argv) > 1 else '/dev/cu.usbmodem141101'
+    OUTDIR = sys.argv[2] if len(sys.argv) > 2 else 'frames'
+    NFRAMES = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+    os.makedirs(OUTDIR, exist_ok=True)
+
     s = serial.Serial(PORT, 115200, timeout=2)
     print(f"Listening on {PORT}, saving to {OUTDIR}/ ...")
     s.reset_input_buffer()
