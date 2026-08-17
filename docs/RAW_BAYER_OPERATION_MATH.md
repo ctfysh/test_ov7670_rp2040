@@ -1061,7 +1061,8 @@ Sheet 3 寄存器表（`-DRAW_BAYER_OFFICIAL_REGS`）做第 8 组 A/B，检验
 
 > **Note**: The above §10.5 A/B measurements used legacy 640×240 shipped config
 > and `rpipico_legacy` env. The current default build (env:rpipico) uses official
-> Table 2-2 registers + per-PCLK sampling at 320×240 (76800 B/line).
+> Table 2-2 registers + every-2nd-PCLK sampling at 320×240 (76800 B/line).
+> Per-PCLK mode (640 bytes/line) causes left-right swap when reshaped to 240×320.
 
 - **official 配置下 'C'=640 边沿/行与 datasheet Table 3-3 吻合**，但
   per-PCLK 采样后每行**只有 320 个不同字节**（DCWCTR=0x11 HDS by 2 +

@@ -102,11 +102,9 @@ USB CDC (Serial) ◀── loop() 发送 "CAM1" + W/H + RGB565 ◀─┘
   `--out`（默认 `bayer_frames/`）、`--frames`（采集帧数，默认 3）、`--pattern`
   （CFA，默认 RGGB）、`--bmp`（顺带写去马赛克 320×240 BMP）。
 - **固件构建**（`platformio.ini`）：
-  - 默认 `[env:rpipico]` = 官方 Table 2-2 寄存器表 + per-PCLK 采样
-    （`-DRAW_BAYER_OFFICIAL_REGS -DRAW_BAYER_PER_PCLK`）。DCWCTR=0x11
-    HDS×2 下采样产生 320 不同字节/行, 匹配 FRAME_W=320。
-  - `[env:rpipico_legacy]` = shipped 表 + PIO 每 2nd PCLK 采样（T7 修复,
-    为 640×480 设计; 在 320×240 下输出 640 不同字节/行但 DMA 仅捕获 320）。
+  - 默认 `[env:rpipico]` = 官方 Table 2-2 寄存存表 + every-2nd-PCLK 采样
+    （`-DRAW_BAYER_OFFICIAL_REGS`）。每行捕获320字节，正确匹配320像素宽。
+  - `[env:rpipico_legacy]` = shipped 表 + PIO 每 2nd PCLK 采样（T7 修复）。
 - ✅ `live_view.py` 已适配 raw bayer（CAM2）：直接显示 320×240 帧
   （灰度默认 / `--demosaic` 彩色），
   无信号超时 2s 显示白色 NO-SIGNAL 屏；`capture.py` 仍为 RGB565（CAM1）专用。
