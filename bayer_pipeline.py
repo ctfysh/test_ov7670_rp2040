@@ -25,21 +25,6 @@ import numpy as np
 from bayer_demosaic import demosaic_bayer
 
 
-def g_map(v):
-    """6-bit 位序解码: g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3 (0..252, 4 的倍数)。
-
-    输入 uint8 ndarray (原始字节), 输出同形状 uint8。b1 为真 MSB。
-    """
-    v = v.astype(np.uint16)
-    b7 = (v >> 7) & 1
-    b6 = (v >> 6) & 1
-    b5 = (v >> 5) & 1
-    b4 = (v >> 4) & 1
-    b3 = (v >> 3) & 1
-    b1 = (v >> 1) & 1
-    return (128 * b1 + 64 * b7 + 32 * b6 + 16 * b5 + 8 * b4 + 4 * b3).astype(np.uint8)
-
-
 def fix_dead_pixels(cfa, threshold=60.0, skip=None):
     """散点死点修复: 与同色 4-邻域 (上下左右, 间隔 2) 中值差 > threshold 则替换。
 
@@ -130,48 +115,26 @@ def render(cfa, pattern="RGGB", r_gain=None, b_gain=None, gamma=0.85, b_extra=0.
     return img.astype(np.uint8)
 
 
-def pipeline(raw, region_cols=range(502, 517), region_y=(60, 160),
-             dead_threshold=60.0, region_threshold=55.0, fix_region=True,
-             fix_dead=True, pattern="RGGB",
+def pipeline(raw, dead_threshold=60.0, fix_dead=True, pattern="RGGB",
              r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
-    """完整管线: 位序解码 -> 楔形区域修复 -> 散点死点修复 -> 渲染。
-
-    raw: 240x320 uint8 原始字节。返回 (rgb, 修复统计 dict)。
-    """
-    cfa = g_map(raw).astype(np.float64)
+    """240x320 raw Bayer -> RGB: 散点死点修复 -> 去马赛克 -> WB -> 伽马。"""
+    cfa = raw.astype(np.float64)
     stats = {}
-    replaced = np.zeros(cfa.shape, dtype=bool)
-    # 1. 区域缺陷修复 (先于死点, 其替换区由 skip 保护)
-    if fix_region:
-        cfa, replaced, stats["region_replaced"] = fix_defect_region(
-            cfa, region_cols, region_y[0], region_y[1], region_threshold)
-        stats["region_skipped"] = int(replaced.sum())
-    # 2. 散点死点修复 (跳过区域缺陷修复过的像素)
     if fix_dead:
-        cfa, stats["dead_replaced"] = fix_dead_pixels(
-            cfa, dead_threshold, skip=replaced)
-    # 3. 渲染
+        cfa, stats["dead_replaced"] = fix_dead_pixels(cfa, dead_threshold)
     rgb = render(cfa, pattern, r_gain, b_gain, gamma, b_extra)
     return rgb, stats
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        description="OV7670 raw Bayer 取证管线: 位序解码 + 缺陷修复 + 渲染 PNG")
+        description="OV7670 raw Bayer 320x240 管线: 死点修复 + 去马赛克 + 渲染 PNG")
     p.add_argument("input", help="240x320 raw 字节文件")
     p.add_argument("-o", "--output", required=True, help="输出 PNG")
-    p.add_argument("--no-region-fix", action="store_true",
-                   help="跳过楔形区域缺陷修复 (保留原始数据)")
     p.add_argument("--no-dead-fix", action="store_true",
                    help="跳过散点死点修复")
-    p.add_argument("--region-cols", default="502-516",
-                   help="疑似缺陷列区间, 如 '502-516' (默认 %(default)s)")
-    p.add_argument("--region-y", default="60-160",
-                   help="区域修复检查行范围, 如 '60-160' (默认 %(default)s)")
     p.add_argument("--dead-threshold", type=float, default=60.0,
                    help="死点判定阈值 (默认 %(default)s)")
-    p.add_argument("--region-threshold", type=float, default=55.0,
-                   help="区域缺陷判定阈值 (默认 %(default)s)")
     p.add_argument("--pattern", default="RGGB", help="CFA 模式 (默认 %(default)s)")
     p.add_argument("--r-gain", type=float, default=None,
                    help="R 增益 (默认全帧灰度世界)")
@@ -183,21 +146,10 @@ def main(argv=None):
                    help="伽马 (默认 %(default)s)")
     args = p.parse_args(argv)
 
-    def _parse_range(s, name):
-        a, b = (int(t) for t in s.split("-"))
-        if a < 0 or b < a:
-            p.error(f"invalid --{name}: {s}")
-        return range(a, b + 1), (a, b + 1)  # 闭区间 [a, b]
-
-    region_cols, _ = _parse_range(args.region_cols, "region-cols")
-    _, region_y = _parse_range(args.region_y, "region-y")
-
     raw = np.fromfile(args.input, dtype=np.uint8).reshape(240, 320)
     rgb, stats = pipeline(
-        raw, region_cols=region_cols, region_y=region_y,
-        dead_threshold=args.dead_threshold,
-        region_threshold=args.region_threshold,
-        fix_region=not args.no_region_fix, fix_dead=not args.no_dead_fix,
+        raw, dead_threshold=args.dead_threshold,
+        fix_dead=not args.no_dead_fix,
         pattern=args.pattern,
         r_gain=args.r_gain, b_gain=args.b_gain,
         gamma=args.gamma, b_extra=args.b_extra)
@@ -206,8 +158,7 @@ def main(argv=None):
     Image.fromarray(rgb).save(args.output)
     print(f"{args.output}: {rgb.shape[1]}x{rgb.shape[0]} saved")
     if stats:
-        print(f"  region_replaced={stats['region_replaced']} "
-              f"(skip {stats['region_skipped']}) dead_replaced={stats['dead_replaced']}")
+        print(f"  dead_replaced={stats.get('dead_replaced', 0)}")
 
 
 if __name__ == "__main__":

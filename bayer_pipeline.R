@@ -1,39 +1,12 @@
 #!/usr/bin/env Rscript
-# OV7670 Raw Bayer 处理管线 (bayer_pipeline.R)
+# OV7670 Raw Bayer 320x240 pipeline: dead pixel fix -> demosaic -> WB -> gamma.
 #
-# 用 R 语言完整重现 bayer_pipeline.py 的取证管线:
-#   g_map                  : 6-bit 位序解码 (b1=MSB, 序 (1,7,6,5,4,3)) -> 0..252
-#   fix_dead_pixels        : 散点死点修复 (同色 4-邻域中值, 差>阈 替换)
-#   fix_defect_region      : 楔形区域缺陷修复 (带外同相位参考插值, 逐像素判定)
-#   demosaic_bayer         : 双线性 G-first + G 校正去马赛克 (valid-mask, 无 padding)
-#   render                 : 去马赛克 + WB + 伽马
-#   pipeline               : 完整管线 -> RGB 数组 + 修复统计
-#
-# 240x320 模式: every-2nd-PCLK 采集, 每行 320 字节, RGGB 拜耳格式。
-#
-# 用法 (与 Python CLI 等价):
+# Usage:
 #   Rscript bayer_pipeline.R input.raw -o out.png
-#   Rscript bayer_pipeline.R input.raw -o out.png --no-region-fix --no-dead-fix
+#   Rscript bayer_pipeline.R input.raw -o out.png --no-dead-fix
 
-suppressPackageStartupMessages(library(png))  # writePNG
+suppressPackageStartupMessages(library(png))
 
-# --- 6-bit 位序解码: g(v)=128*b1+64*b7+32*b6+16*b5+8*b4+4*b3 (0..252, 4 的倍数) ---
-g_map <- function(v) {
-    dims <- dim(v)
-    v <- as.integer(v)
-    b7 <- bitwAnd(v %/% 128L, 1L)
-    b6 <- bitwAnd(v %/% 64L, 1L)
-    b5 <- bitwAnd(v %/% 32L, 1L)
-    b4 <- bitwAnd(v %/% 16L, 1L)
-    b3 <- bitwAnd(v %/% 8L, 1L)
-    b1 <- bitwAnd(v %/% 2L, 1L)
-    out <- as.integer(128 * b1 + 64 * b7 + 32 * b6 + 16 * b5 + 8 * b4 + 4 * b3)
-    dim(out) <- dims   # 恢复矩阵形状
-    out
-}
-
-# --- 矩阵平移辅助: out[y,x] = mat[y+dy, x+dx], 越界处为 0 ---
-# (等价于 numpy np.roll + _valid_mask 的界内贡献; 目标掩码同样平移, 越界为 0)
 shift_matrix <- function(mat, dy, dx) {
     h <- nrow(mat)
     w <- ncol(mat)
@@ -48,7 +21,6 @@ shift_matrix <- function(mat, dy, dx) {
     out
 }
 
-# --- 邻域平均: 对每个 kernel 偏移, 只累加目标掩码为真且在界内的源值 ---
 gather_avg <- function(src, h, w, target_mask, kernel) {
     vals <- matrix(0, h, w)
     cnt <- matrix(0, h, w)
@@ -64,7 +36,6 @@ gather_avg <- function(src, h, w, target_mask, kernel) {
     vals / pmax(cnt, 1)
 }
 
-# --- 颜色映射: (h,w) 字符数组, pattern 行主序覆盖 2x2 块 ---
 color_map <- function(pattern, h, w) {
     yy <- (0:(h - 1)) %% 2
     xx <- (0:(w - 1)) %% 2
@@ -73,8 +44,6 @@ color_map <- function(pattern, h, w) {
     matrix(chars[idx], h, w)
 }
 
-# --- 双线性去马赛克 (G-first + G 校正 R/B), 返回 0..255 截断后的数值数组 ---
-# (与 Python demosaic_bayer 逐像素等价: 边界只用界内同色邻居, 无 padding)
 demosaic_bayer <- function(cfa, pattern) {
     h <- nrow(cfa)
     w <- ncol(cfa)
@@ -88,16 +57,13 @@ demosaic_bayer <- function(cfa, pattern) {
     kernel8 <- kernel8[!(kernel8$dy == 0 & kernel8$dx == 0), , drop = FALSE]
     kernel8 <- lapply(seq_len(nrow(kernel8)), function(i) c(kernel8$dy[i], kernel8$dx[i]))
 
-    # G: R/B 位置 = 同色 (正交) G 邻域平均
     g_avg <- gather_avg(cfa_f, h, w, is_g, kernel8)
     g <- ifelse(is_g == 1, cfa_f, g_avg)
 
-    # R: 缺失位置 = 同色邻域平均 * (G_here / G_at_R_neighbors) 校正
     r_avg <- gather_avg(cfa_f, h, w, is_r, kernel8)
     g_at_r <- gather_avg(g, h, w, is_r, kernel8)
     r <- ifelse(is_r == 1, cfa_f, r_avg * (g / pmax(g_at_r, 1e-9)))
 
-    # B: 对称
     b_avg <- gather_avg(cfa_f, h, w, is_b, kernel8)
     g_at_b <- gather_avg(g, h, w, is_b, kernel8)
     b <- ifelse(is_b == 1, cfa_f, b_avg * (g / pmax(g_at_b, 1e-9)))
@@ -106,70 +72,25 @@ demosaic_bayer <- function(cfa, pattern) {
     g <- pmin(255, pmax(0, g))
     b <- pmin(255, pmax(0, b))
     arr <- array(0, dim = c(h, w, 3))
-    arr[, , 1] <- floor(r)  # 模拟 numpy astype(uint8) 截断
+    arr[, , 1] <- floor(r)
     arr[, , 2] <- floor(g)
     arr[, , 3] <- floor(b)
     arr
 }
 
-# --- 楔形区域缺陷修复: 区域内像素与带外同相位参考差>threshold 则替换 ---
-# region_cols: 疑似缺陷列 (0 基, 如 502:516); y_lo/y_hi: 检查行 [y_lo, y_hi) (0 基)
-# 返回 list(cfa=, replaced=, count=)
-fix_defect_region <- function(cfa, region_cols, y_lo, y_hi, threshold = 55.0) {
+fix_dead_pixels <- function(cfa, threshold = 60.0) {
     cfa <- cfa + 0.0
     h <- nrow(cfa)
     w <- ncol(cfa)
-    replaced <- matrix(FALSE, h, w)
-    count <- 0L
-    y_lo_r <- y_lo + 1L          # 0 基 -> R 1 基
-    y_hi_r <- min(y_hi, h)       # Python range(y_lo, min(y_hi, h)) 的上界
-    cols <- as.integer(region_cols) + 1L
-    if (y_lo_r > y_hi_r) return(list(cfa = cfa, replaced = replaced, count = count))
-    for (y in y_lo_r:y_hi_r) {
-        for (x in cols) {
-            lv <- NULL
-            rv <- NULL
-            lx <- x - 2L
-            while (lx >= 1L) {
-                if (!(lx %in% cols)) { lv <- cfa[y, lx]; break }
-                lx <- lx - 2L
-            }
-            rx <- x + 2L
-            while (rx <= w) {
-                if (!(rx %in% cols)) { rv <- cfa[y, rx]; break }
-                rx <- rx + 2L
-            }
-            refs <- c(lv, rv)    # NULL 自动剔除
-            if (length(refs) == 0) next
-            ref <- mean(refs)
-            if (abs(cfa[y, x] - ref) > threshold) {
-                cfa[y, x] <- ref
-                replaced[y, x] <- TRUE
-                count <- count + 1L
-            }
-        }
-    }
-    list(cfa = cfa, replaced = replaced, count = count)
-}
-
-# --- 散点死点修复: 与同色 4-邻域 (上下左右, 间隔 2) 中值差>threshold 则替换 ---
-# skip: 逻辑掩码, TRUE 的像素不处理 (如区域缺陷修复区)
-# 返回 list(cfa=, count=)
-fix_dead_pixels <- function(cfa, threshold = 60.0, skip = NULL) {
-    cfa <- cfa + 0.0
-    h <- nrow(cfa)
-    w <- ncol(cfa)
-    if (is.null(skip)) skip <- matrix(FALSE, h, w)
     count <- 0L
     if (h < 5 || w < 5) return(list(cfa = cfa, count = count))
-    for (y in 3:(h - 2)) {       # Python range(2, h-2): y=2..h-3 -> R 3..h-2
+    for (y in 3:(h - 2)) {
         for (x in 3:(w - 2)) {
-            if (skip[y, x]) next
             nbrs <- numeric(0)
             for (off in list(c(-2, 0), c(2, 0), c(0, -2), c(0, 2))) {
                 yy <- y + off[1]
                 xx <- x + off[2]
-                if (yy >= 1L && yy <= h && xx >= 1L && xx <= w && !skip[yy, xx]) {
+                if (yy >= 1L && yy <= h && xx >= 1L && xx <= w) {
                     nbrs <- c(nbrs, cfa[yy, xx])
                 }
             }
@@ -184,11 +105,8 @@ fix_dead_pixels <- function(cfa, threshold = 60.0, skip = NULL) {
     list(cfa = cfa, count = count)
 }
 
-# --- 去马赛克 -> 灰度世界 WB -> 伽马, 返回 (h,w,3) 0..255 ---
 render <- function(cfa, pattern = "RGGB", r_gain = NULL, b_gain = NULL,
                    gamma = 0.85, b_extra = 0.93) {
-    h <- nrow(cfa)
-    w <- ncol(cfa)
     rgb <- demosaic_bayer(cfa, pattern) + 0.0
     if (is.null(r_gain)) r_gain <- mean(rgb[, , 2]) / mean(rgb[, , 1])
     if (is.null(b_gain)) b_gain <- mean(rgb[, , 2]) / mean(rgb[, , 3])
@@ -202,40 +120,18 @@ render <- function(cfa, pattern = "RGGB", r_gain = NULL, b_gain = NULL,
     floor(img)
 }
 
-# --- 完整管线: 位序解码 -> 楔形区域修复 -> 散点死点修复 -> 渲染 ---
-# raw: 240x320 整数矩阵 (原始字节)。返回 list(rgb=, stats=)
-pipeline <- function(raw, region_cols = 502:516, region_y = c(60, 160),
-                     dead_threshold = 60.0, region_threshold = 55.0,
-                     fix_region = TRUE, fix_dead = TRUE,
+pipeline <- function(raw, dead_threshold = 60.0, fix_dead = TRUE,
                      pattern = "RGGB",
                      r_gain = NULL, b_gain = NULL, gamma = 0.85, b_extra = 0.93) {
-    cfa <- g_map(raw) + 0.0
+    cfa <- raw + 0.0
     stats <- list()
-    replaced <- matrix(FALSE, nrow(cfa), ncol(cfa))
-    if (fix_region) {
-        res <- fix_defect_region(cfa, region_cols, region_y[1], region_y[2], region_threshold)
-        cfa <- res$cfa
-        replaced <- res$replaced
-        stats$region_replaced <- as.integer(res$count)
-        stats$region_skipped <- as.integer(sum(replaced))
-    }
     if (fix_dead) {
-        res2 <- fix_dead_pixels(cfa, dead_threshold, skip = replaced)
-        cfa <- res2$cfa
-        stats$dead_replaced <- as.integer(res2$count)
+        res <- fix_dead_pixels(cfa, dead_threshold)
+        cfa <- res$cfa
+        stats$dead_replaced <- as.integer(res$count)
     }
     rgb <- render(cfa, pattern, r_gain, b_gain, gamma, b_extra)
     list(rgb = rgb, stats = stats)
-}
-
-# --- CLI 参数解析 (与 Python argparse 语义对齐) ---
-parse_range <- function(s, name) {
-    parts <- as.integer(strsplit(s, "-", fixed = TRUE)[[1]])
-    if (length(parts) != 2 || is.na(parts[1]) || is.na(parts[2]) ||
-        parts[1] < 0 || parts[2] < parts[1]) {
-        stop(sprintf("invalid --%s: %s", name, s), call. = FALSE)
-    }
-    list(cols = parts[1]:parts[2], y = c(parts[1], parts[2] + 1L))
 }
 
 main <- function(argv) {
@@ -256,46 +152,34 @@ main <- function(argv) {
     if (is.na(output)) output <- get_val("--output", NULL)
     if (is.na(output)) stop("-o/--output required", call. = FALSE)
 
-    no_region <- get_flag("--no-region-fix")
     no_dead <- get_flag("--no-dead-fix")
-    region_cols_str <- get_val("--region-cols", "502-516")
-    region_y_str <- get_val("--region-y", "60-160")
     dead_threshold <- as.numeric(get_val("--dead-threshold", "60"))
-    region_threshold <- as.numeric(get_val("--region-threshold", "55"))
     r_gain_str <- get_val("--r-gain", NA)
     b_gain_str <- get_val("--b-gain", NA)
     b_extra <- as.numeric(get_val("--b-extra", "0.93"))
     gamma <- as.numeric(get_val("--gamma", "0.85"))
 
-    rc <- parse_range(region_cols_str, "region-cols")
-    ry <- parse_range(region_y_str, "region-y")
     r_gain <- if (is.na(r_gain_str)) NULL else as.numeric(r_gain_str)
     b_gain <- if (is.na(b_gain_str)) NULL else as.numeric(b_gain_str)
 
-    # 读 raw: 240x320 字节, 行主序
     con <- file(input, "rb")
     on.exit(close(con))
     bytes <- readBin(con, "raw", n = 240 * 320)
-    if (length(bytes) < 240 * 320) stop(sprintf("%s: %d B < 需要 %d B (240x320)", input, length(bytes), 240 * 320), call. = FALSE)
+    if (length(bytes) < 240 * 320) stop(sprintf("%s: %d B < need %d B (240x320)", input, length(bytes), 240 * 320), call. = FALSE)
     raw <- matrix(as.integer(bytes[1:(240 * 320)]), nrow = 240, ncol = 320, byrow = TRUE)
 
-    res <- pipeline(raw, region_cols = rc$cols, region_y = ry$y,
-                    dead_threshold = dead_threshold, region_threshold = region_threshold,
-                    fix_region = !no_region, fix_dead = !no_dead,
+    res <- pipeline(raw, dead_threshold = dead_threshold, fix_dead = !no_dead,
                     r_gain = r_gain, b_gain = b_gain, gamma = gamma, b_extra = b_extra)
 
-    # 写 PNG (8-bit RGB, 与 PIL 输出等价)
     writePNG(res$rgb / 255, target = output)
     cat(sprintf("%s: %dx%d saved\n", output, ncol(res$rgb), nrow(res$rgb)))
     st <- res$stats
     if (length(st) > 0) {
-        cat(sprintf("  region_replaced=%d (skip %d) dead_replaced=%d\n",
-                    st$region_replaced, st$region_skipped, st$dead_replaced))
+        cat(sprintf("  dead_replaced=%d\n", st$dead_replaced))
     }
     invisible(res)
 }
 
-# --- 模块守卫: 仅命令行运行时执行 main ---
 if (sys.nframe() == 0 && !interactive()) {
     main(commandArgs(trailingOnly = TRUE))
 }
