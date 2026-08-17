@@ -126,9 +126,17 @@ def main():
         frames_limit = int(clean[i + 1])
         del clean[i:i + 2]
 
-    port = clean[0] if len(clean) > 0 else find_port()
-    scale = int(clean[1]) if len(clean) > 1 else 2
-    rot = int(clean[2]) if len(clean) > 2 else 90
+    def _opt(name, default):
+        if name in clean:
+            i = clean.index(name)
+            val = clean[i + 1]
+            del clean[i:i + 2]
+            return val
+        return default
+
+    port = _opt("--port", None) or (clean[0] if len(clean) > 0 else find_port())
+    scale = int(_opt("--scale", clean[1] if len(clean) > 1 else "2"))
+    rot = int(_opt("--rotate", clean[2] if len(clean) > 2 else "90"))
     rot_k = (rot // 90) % 4  # np.rot90 k: 1 = CCW 90deg (rotate left)
     if not port:
         print("No /dev/cu.usbmodem* device found; pass a port explicitly.")
