@@ -115,28 +115,60 @@ def render(cfa, pattern="RGGB", r_gain=None, b_gain=None, gamma=0.85, b_extra=0.
     return img.astype(np.uint8)
 
 
-def fix_leading_zeros(cfa):
-    """Adaptive per-row leading-zero fix: replace N leading zeros with column N value.
+def fix_zero_columns(cfa):
+    """Replace ALL zero pixels with linear interpolation from nearest non-zero neighbors.
 
-    COM14=0x00: 2 leading zeros on every row.
-    COM14=0x18 (PCLK_DIV gate): 6 leading zeros on even rows, 0 on odd rows.
-    Detects per-row zero count and replaces only what's needed.
+    OV7670 Bayer pipeline delay produces:
+      - Columns 0-6: stale duplicates (same value, not zeros)
+      - Columns 7-10: zeros (pipeline flush)
+      - Columns 11+: real pixel data
+
+    Handles zeros ANYWHERE in the row, not just leading zeros.
     """
-    cfa = cfa.copy()
-    for r in range(cfa.shape[0]):
+    cfa = cfa.copy().astype(np.float64)
+    h, w = cfa.shape
+    for r in range(h):
         row = cfa[r]
-        nz = 0
-        while nz < len(row) and row[nz] == 0:
-            nz += 1
-        if nz > 0 and nz < len(row):
-            cfa[r, :nz] = row[nz]
+        i = 0
+        while i < w:
+            if row[i] != 0:
+                i += 1
+                continue
+            lo = i
+            while i < w and row[i] == 0:
+                i += 1
+            hi = i
+
+            left_val, left_idx = None, lo - 1
+            while left_idx >= 0:
+                if row[left_idx] != 0:
+                    left_val, left_idx = row[left_idx], left_idx
+                    break
+                left_idx -= 1
+
+            right_val, right_idx = None, hi
+            while right_idx < w:
+                if row[right_idx] != 0:
+                    right_val, right_idx = row[right_idx], right_idx
+                    break
+                right_idx += 1
+
+            if left_val is not None and right_val is not None:
+                span = right_idx - left_idx
+                for j in range(lo, hi):
+                    t = (j - left_idx) / span
+                    row[j] = left_val * (1 - t) + right_val * t
+            elif left_val is not None:
+                row[lo:hi] = left_val
+            elif right_val is not None:
+                row[lo:hi] = right_val
     return cfa
 
 
 def pipeline(raw, dead_threshold=60.0, fix_dead=True, pattern="RGGB",
              r_gain=None, b_gain=None, gamma=0.85, b_extra=0.93):
     """240x320 raw Bayer -> RGB: 修复零列 -> 散点死点修复 -> 去马赛克 -> WB -> 伽马。"""
-    cfa = fix_leading_zeros(raw.astype(np.float64))
+    cfa = fix_zero_columns(raw.astype(np.float64))
     stats = {}
     if fix_dead:
         cfa, stats["dead_replaced"] = fix_dead_pixels(cfa, dead_threshold)

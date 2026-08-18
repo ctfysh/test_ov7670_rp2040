@@ -120,15 +120,41 @@ render <- function(cfa, pattern = "RGGB", r_gain = NULL, b_gain = NULL,
     floor(img)
 }
 
-fix_leading_zeros <- function(cfa) {
+fix_zero_columns <- function(cfa) {
     h <- nrow(cfa)
     w <- ncol(cfa)
     if (w < 2) return(cfa)
     for (r in seq_len(h)) {
         row <- cfa[r, ]
-        nz <- 1
-        while (nz <= w && row[nz] == 0) nz <- nz + 1
-        if (nz > 1 && nz <= w) cfa[r, 1:(nz - 1)] <- row[nz]
+        i <- 1
+        while (i <= w) {
+            if (row[i] != 0) { i <- i + 1; next }
+            lo <- i
+            while (i <= w && row[i] == 0) i <- i + 1
+            hi <- i - 1L
+            left_val <- NA; left_idx <- lo - 1L
+            while (left_idx >= 1L) {
+                if (row[left_idx] != 0) { left_val <- row[left_idx]; break }
+                left_idx <- left_idx - 1L
+            }
+            right_val <- NA; right_idx <- hi + 1L
+            while (right_idx <= w) {
+                if (row[right_idx] != 0) { right_val <- row[right_idx]; break }
+                right_idx <- right_idx + 1L
+            }
+            if (!is.na(left_val) && !is.na(right_val)) {
+                span <- right_idx - left_idx
+                for (j in lo:hi) {
+                    t_val <- (j - left_idx) / span
+                    row[j] <- left_val * (1 - t_val) + right_val * t_val
+                }
+            } else if (!is.na(left_val)) {
+                row[lo:hi] <- left_val
+            } else if (!is.na(right_val)) {
+                row[lo:hi] <- right_val
+            }
+        }
+        cfa[r, ] <- row
     }
     cfa
 }
@@ -136,7 +162,7 @@ fix_leading_zeros <- function(cfa) {
 pipeline <- function(raw, dead_threshold = 60.0, fix_dead = TRUE,
                      pattern = "RGGB",
                      r_gain = NULL, b_gain = NULL, gamma = 0.85, b_extra = 0.93) {
-    cfa <- fix_leading_zeros(raw + 0.0)
+    cfa <- fix_zero_columns(raw + 0.0)
     stats <- list()
     if (fix_dead) {
         res <- fix_dead_pixels(cfa, dead_threshold)

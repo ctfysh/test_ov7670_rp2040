@@ -155,11 +155,9 @@ def main(argv=None):
 
         if args.bmp:
             import bayer_demosaic
-            # Fix 2 leading zero columns (Bayer pipeline delay)
-            cfa_fixed = cfa.copy()
-            cfa_fixed[:, 0] = cfa_fixed[:, 2]
-            cfa_fixed[:, 1] = cfa_fixed[:, 3]
-            rgb = bayer_demosaic.demosaic_bayer(cfa_fixed, pattern=args.pattern)
+            from bayer_pipeline import fix_zero_columns
+            cfa_fixed = fix_zero_columns(cfa.astype(np.float64))
+            rgb = bayer_demosaic.demosaic_bayer(cfa_fixed.astype(np.uint8), pattern=args.pattern)
             with open(os.path.join(args.out, f"frame_{i:03d}_{W}x{H}.bmp"), 'wb') as f:
                 f.write(bayer_demosaic.rgb_to_bmp(W, H, rgb))
 
