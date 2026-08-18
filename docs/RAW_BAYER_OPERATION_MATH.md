@@ -249,14 +249,14 @@ autopush `in pins,8`）、FIFO=0（2-bit 编码，4 words 满回绕为 0）→ *
    （修复前实测 upper R≈148.6 vs lower R≈42.1）。
 
 **修复**：上窗 VREF[3:2]=0b11 → VSTOP_eff=255 → 行 15..254（240 行，真实
-3 行重叠 252..254）；COM8=0xE1（AGC/AEC 冻结，300 ms 收敛后锁定）。
+3 行重叠 252..254）；COM8=0xE2（AGC off, AEC off, AWB on，300 ms 收敛后锁定）。
 
 **陈旧字机制**（已知、非缺陷）：DMA 完成后 SM 继续采样 → FIFO 满（4 words）
 → 停 autopush；下次 arming 的 clear_fifos 使陈旧 4 B 先入 FIFO → 每帧首
 4 字节=陈旧字（first4=`00000000`），仍行对齐，行均值不可见。
 
 **修复验证（当前固件，设备寄存器实测）**：
-- `'R'` 回读确认已烧录：COM7=0x01、VREF=0x0F、VSTRT/VSTOP=0x03/0x3F、COM8=0xE1。
+- `'R'` 回读确认已烧录：COM7=0x01、VREF=0x0F、VSTRT/VSTOP=0x03/0x3F、COM8=0xE2。
 - 全窗口 framesave_probe：**40/40 GOOD**（shift-0 corr 0.997–1.000）。
 - 半窗口 framesave_half：**40/40 GOOD**；vring_probe **12/12 GOOD**
   （940 个 guard 边沿全部 HREF=0 → arming 从不发生在窗口中途 → 旋转

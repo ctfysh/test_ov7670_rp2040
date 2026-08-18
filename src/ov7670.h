@@ -107,13 +107,13 @@ extern "C" {
 #define OV7670_COM3_DCWEN 0x04 // downsample enable
 #define OV7670_COM3_SCALEEN 0x08 // zoom enable
 
-// COM8 bits
+// COM8 bits (2006 datasheet Table 5: bit2=AGC, bit1=AWB, bit0=AEC)
 #define OV7670_COM8_FASTAEC 0x80
 #define OV7670_COM8_AECSTEP 0x40
 #define OV7670_COM8_BANDING 0x20
 #define OV7670_COM8_AGC 0x04
-#define OV7670_COM8_AEC 0x02
-#define OV7670_COM8_AWB 0x01
+#define OV7670_COM8_AWB 0x02 // bit1 = AWB Enable (was wrongly 0x01: AEC/AWB swapped)
+#define OV7670_COM8_AEC 0x01 // bit0 = AEC Enable
 
 // Output sizes (index into window table)
 #define OV7670_SIZE_DIV1 0 // 640x480 VGA

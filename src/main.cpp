@@ -312,7 +312,9 @@ static void reg_readback_send(void) {
       0x11, // CLKRC        expect 0x80 (20.8 MHz build; fINT = XCLK/2)
       0x6B, // DBLV         expect 0x0A (PLL)
       0x1E, // MVFP         expect 0x07 (no flip)
-      0x13, // COM8         expect 0xE1 (AGC+AEC locked for seam-free stitching)
+      0x13, // COM8         expect 0xE2 (AEC+AGC off, AWB on; locked for seam-free stitching)
+      0x00, // GAIN         AGC current gain (live; frozen while AGC off)
+      0x10, // AECH         exposure high byte (live; frozen while AEC off)
       0x17, // HSTART       expect 0x11
       0x18, // HSTOP        expect 0x61
       0x19, // VSTART       expect 0x03 (full window after init)

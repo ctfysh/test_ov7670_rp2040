@@ -363,7 +363,8 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
 #else
     {0x12, 0x15}, // COM7: QVGA(bit4) + RGB_SELECT(bit2) + RAW(bit0) = Processed Bayer
 #endif
-    {0x13, 0xe2}, // COM8: AGC+AWB on, AEC OFF (bit5=0) - prevents AEC window jitter
+    {0x13, 0xe2}, // COM8: AGC off (bit2=0), AWB on (bit1=1), AEC off (bit0=0) -
+                   // prevents AEC window jitter; matches init_raw_bayer lock write
     {0x40, 0xc0}, // COM15: full 0-255 range (no RGB565 bit — fixes D7=D0 defect)
     {0x1e, 0x07}, // MVFP: no mirror/vflip
     {0x0c, 0x04}, // COM3: Table 2-2 Sheet 3 = 0x04 (DCW/zoom enable)
@@ -411,8 +412,8 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x11, 0x01}, // CLKRC: OFFICIAL 0x01 (Table 2-2; 24 MHz input reference)
     {0x6b, 0x0a}, // DBLV: PLL bypass (kept from shipped table)
     {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
-    {0x13, 0xe2}, // COM8: AGC+AWB on, AEC OFF (bit5=0) - prevents AEC from
-                   // mutating VSTART/VSTOP/VREF window regs (line-count jitter)
+    {0x13, 0xe2}, // COM8: AGC off (bit2=0), AWB on (bit1=1), AEC off (bit0=0) -
+                   // prevents AEC from mutating VSTART/VSTOP/VREF window regs (line-count jitter)
     {0x40, 0xc0}, // COM15: full 0-255 range (no RGB565 bit — fixes D7=D0 defect)
     {0x1e, 0x07}, // MVFP: no mirror/vflip (matches shipped)
     {0x0c, 0x00}, // COM3: OFFICIAL 0x00 (= shipped)
@@ -512,16 +513,19 @@ int ov7670_init_raw_bayer(void) {
   // tS:REG settling (~10 frames): let AGC/AEC converge on the scene first,
   // THEN freeze them. The upper/lower half-frames are captured seconds apart
   // as two independent acquisitions; with auto-exposure still enabled (COM8
-  // reset default 0xE7 = FASTAEC|AECSTEP|BANDING|AGC|AEC|AWB) the AGC engine
+  // reset default 0xE7 = FASTAEC|AECSTEP|BANDING|AGC|AWB|AEC) the AGC engine
   // keeps re-converging between the two, producing a brightness jump at the
   // stitch seam (measured seam row diff up to 128/255 on live data). Clearing
-  // COM8 bits 2/1 (AGC+AEC) leaves 0xE1 (FASTAEC|AECSTEP|BANDING|AWB): the
-  // GAIN/AECH registers are driven by the auto-exposure engine and are
-  // read-only while it runs, so disabling AGC+AEC freezes them at the values
-  // converged above — both halves then share one locked exposure. AWB is kept
-  // on (raw Bayer output already bypasses most color processing; AWB only
-  // nudges R/B gains and does not cause the seam brightness jump).
-  ov7670_write_reg(OV7670_REG_COM8, 0xE1);
+  // COM8 bit2 (AGC) and bit0 (AEC), keeping bit1 (AWB), leaves 0xE2
+  // (FASTAEC|AECSTEP|BANDING|AWB): the GAIN/AECH registers are driven by the
+  // auto-exposure engine and are read-only while it runs, so disabling AGC+AEC
+  // freezes them at the values converged above — both halves then share one
+  // locked exposure. AWB is kept on (raw Bayer output already bypasses most
+  // color processing; AWB only nudges R/B gains and does not cause the seam
+  // brightness jump). NOTE: the pre-fix value 0xE1 set bit0 (AEC Enable) per
+  // the datasheet bit map — the OLD ov7670.h macros had AEC/AWB swapped, so
+  // 0xE1 left AEC RUNNING and the image brightness oscillated frame-to-frame.
+  ov7670_write_reg(OV7670_REG_COM8, 0xE2);
 
   sleep_ms(100); // register settle after the lock write
   return 0;
