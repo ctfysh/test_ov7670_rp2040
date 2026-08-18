@@ -9,35 +9,26 @@
 
 ; ---------------------------------------------------------------------------
 ; pixel capture (SM1)
-; Waits for HREF high, then samples 8 data pins on EVERY 2ND rising PCLK edge.
+; Waits for HREF high, then samples 8 data pins on EVERY 2ND falling PCLK edge.
 ; One byte per pixel (RGB565 LSB first from camera; paired bytes form a pixel).
 ; WAIT GPIO uses ABSOLUTE GPIO numbers (17/18); 'wait pin' would offset from
 ; the IN base (8), hitting the wrong pins (D0/D1). This is the critical fix
 ; vs the earlier hand-encoded program.
 ;
-; Every-2nd-PCLK sampling (T7, measured 2026-08-14): in raw mode (COM7=0x01)
-; per-PCLK sampling yields dup_even=1.000 across SEVEN register configs, and
-; sampling every 2nd PCLK rising edge recovers a clean 640-distinct-byte Bayer
-; line (dup_even 1.000->0.385; same-plane colLag2=0.426 >> colLag1=0.146 at
-; 640 reshape; capture path proven identical to the known-good RGB565
-; worktree, so the duplication is sensor-side). Interpretation: each distinct
-; byte is held for 2 PCLKs over a 1280-PCLK line. NOTE: the 1280-PCLK/line
-; count is INFERRED from dup_even=1.000 + 640 distinct bytes recovered, not
-; directly counted; the datasheet's official raw timing is 640 PCLK/line
-; (Table 3-3: raw PCLK = fINT/2) and Table 6-3's "2 PCLK/byte" belongs to the
-; 1/2x..1/4x horizontal-scaling band (REG74=0x20 => 1x, i.e. 1 PCLK/byte), so
-; the datasheet does NOT explain this behavior — mechanism undetermined. A PIO
-; PCLK-edge counter per HREF line is the pending decisive measurement
-; (640 vs 1280).
-; Loop must end with PCLK LOW so the loop-start 'wait 1 gpio 18' waits for the
-; NEXT rising edge instead of passing through on the current high level.
+; Every-2nd-PCLK falling-edge sampling: COM14=0x18 opens PCLK_DIV gate,
+; DCWCTR x2 downsampling active, sensor outputs 320 bytes/line (each held 2 PCLKs).
+; Byte transitions on PCLK rising edge; sampling on falling edge avoids
+; setup/hold violations. Loop must end with PCLK HIGH so the loop-start
+; 'wait 0 gpio 18' waits for the NEXT falling edge instead of passing through
+; on the current low level.
 ; ---------------------------------------------------------------------------
 .program capture
 .wrap_target
+    wait 0 gpio 17     ; ensure HREF LOW (line boundary sync)
     wait 1 gpio 17     ; HREF high -> line start
     wait 1 gpio 18     ; PCLK rising edge (skip: byte held 2 PCLKs)
-    wait 0 gpio 18     ; PCLK falling edge
-    wait 1 gpio 18     ; next PCLK rising edge -> sample here
+    wait 0 gpio 18
+    wait 1 gpio 18     ; next PCLK rising edge -> sample here (data stable)
     in pins, 8         ; sample D0-D7 (in_base = GP8..GP15)
     wait 0 gpio 18     ; PCLK falling edge (end loop LOW)
 .wrap

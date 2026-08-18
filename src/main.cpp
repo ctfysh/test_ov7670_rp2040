@@ -610,7 +610,14 @@ void setup() {
 
 #ifdef RAW_BAYER
   ov7670_init_raw_bayer();
+#ifndef PROCESSED_BAYER_QVGA
+  // 240-row centered window is for the unscaled RAW_BAYER path (VGA sensor
+  // output, 1:1 rows). QVGA mode applies YSC vertical scaling 2:1, so the
+  // window must span the full 480 rows (set by the PROCESSED_BAYER_QVGA
+  // register block) - otherwise only 120 unique rows are produced and the
+  // frame generator duplicates them (top half == bottom half).
   ov7670_set_bayer_window_320x240();
+#endif
 #else
   ov7670_init();
 #endif

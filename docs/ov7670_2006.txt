@@ -1,0 +1,2239 @@
+Omni                                   ision
+                                                                                                              Advanced Information
+                                                           ®                                                  Preliminary Datasheet
+
+                                             OV7670/OV7171 CMOS VGA (640x480) CAMERACHIPTM Sensor
+                                                                       with OmniPixel ® Technology
+
+General Description                                                             Applications
+    The OV7670/OV7171 CAMERACHIPTM image sensor is a low                            •      Cellular and Picture Phones
+    voltage CMOS device that provides the full functionality of a                   •      Toys
+    single-chip VGA camera and image processor in a small                           •      PC Multimedia
+    footprint package. The OV7670/OV7171 provides full-frame,                       •      Digital Still Cameras
+    sub-sampled or windowed 8-bit images in a wide range of
+    formats, controlled through the Serial Camera Control Bus                   Key Specifications
+    (SCCB) interface.
+    This product has an image array capable of operating at up                             Active Array Size                   640 x 480
+    to 30 frames per second (fps) in VGA with complete user                                     Digital Core                   1.8VDC +10%
+    control over image quality, formatting and output data                       Power Supply        Analog                    2.45V to 3.0V
+    transfer. All required image processing functions, including                                         I/O                   1.7V to 3.0Va
+    exposure control, gamma, white balance, color saturation,
+                                                                                        Power                                  60 mW typical
+    hue control and more, are also programmable through the                                                    Active
+                                                                                                                               (15fps VGA YUV format)
+    SCCB interface. In addition, OmniVision sensors use                          Requirements      Standby                     < 20 µA
+    proprietary sensor technology to improve image quality by
+    reducing or eliminating common lighting/electrical sources of                   Temperature   Operation                    -30°C to 70°C
+    image contamination, such as fixed pattern noise (FPN),                              Range Stable Image                    0°C to 50°C
+    smearing, blooming, etc., to produce a clean, fully stable                                                                 • YUV/YCbCr 4:2:2
+    color image.                                                                                                               • RGB565/555/444
+                                                                                           Output Formats (8-bit)
+                                                                                                                               • GRB 4:2:2
+                                                                                                                               • Raw RGB Data
+                Note: The OV7670/OV7171 uses a                                                         Lens Size               1/6"
+   Pb           lead-free package.                                                              Chief Ray Angle                25°
+                                                                                                Maximum Image
+                                                                                                                               30 fps for VGA
+Features                                                                                           Transfer Rate
+                                                                                                      Sensitivity              1.3 V/(Lux • sec)
+    •     High sensitivity for low-light operation
+                                                                                                       S/N Ratio               46 dB
+    •     Low operating voltage for embedded portable apps
+                                                                                                 Dynamic Range                 52 dB
+    •     Standard SCCB interface compatible with I2C interface                                      Scan Mode                 Progressive
+    •     Output support for Raw RGB, RGB (GRB 4:2:2,                                      Electronics Exposure                Up to 510:1 (for selected fps)
+          RGB565/555/444), YUV (4:2:2) and YCbCr (4:2:2)
+                                                                                                       Pixel Size              3.6 µm x 3.6 µm
+          formats
+                                                                                                    Dark Current               12 mV/s at 60°C
+    •     Supports image sizes: VGA, CIF, and any size scaling
+          down from CIF to 40x30                                                                   Well Capacity               17 K e
+    •     VarioPixel® method for sub-sampling                                                        Image Area                2.36 mm x 1.76 mm
+    •     Automatic image control functions including: Automatic                           Package Dimensions                  3785 µm x 4235 µm
+          Exposure Control (AEC), Automatic Gain Control                       a.       I/O power should be 2.45V or higher when using the internal
+          (AGC), Automatic White Balance (AWB), Automatic                               regulator for Core (1.8V); otherwise, it is necessary to provide
+          Band Filter (ABF), and Automatic Black-Level                                  an external 1.8V for the Core power supply.
+          Calibration (ABLC)
+    •     Image quality controls including color saturation, hue,               Figure 1 OV7670/OV7171 Pin Diagram (Top View)
+          gamma, sharpness (edge enhancement), and
+          anti-blooming
+    •     ISP includes noise reduction and defect correction                                           A1      A2       A3       A4     A5
+
+    •     Supports LED and flash strobe mode                                                          AVDD    SIO_D    SIO_C     D1     D3
+
+    •     Supports scaling                                                                             B1      B2       B3       B4     B5
+
+    •     Lens shading correction                                                                     PWDN    VREF2    AGND      D0     D2
+
+    •     Flicker (50/60 Hz) auto detection                                                            C1       C2
+    •     Saturation level auto adjust (UV adjust)                                                    DVDD    VREF1
+                                                                                                                       OV7670/OV7171
+    •     Edge enhancement level auto adjust                                                           D1      D2
+    •     De-noise level auto adjust                                                                  VSYNC    HREF
+
+
+Ordering Information                                                                                   E1       E2      E3       E4     E5
+
+                                                                                                      PCLK    STROBE   XCLK      D7     D5
+
+                   Product                             Package                                         F1       F2      F3       F4     F5
+
+                                                                                                      DOVDD   RESET#   DOGND     D6     D4
+        OV07670-VL2A (Color, lead-free)               24 pin CSP2
+        OV07171-VL2A (B&W, lead-free)                 24 pin CSP2                                                                        7670CSP_DS_001
+
+
+
+
+© 2006 OmniVision Technologies, Inc.   OmniPixel, VarioPixel, OmniVision, and the OmniVision logo are registered trademarks of OmniVision Technologies, Inc.
+Version 1.4, August 21, 2006                                                                    CameraChip is a trademark of OmniVision Technologies, Inc.
+                                                                                                    These specifications are subject to change without notice.
+OV7670/OV7171                     CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                       Omni        ision
+
+
+Functional Description
+    Figure 2 shows the functional block diagram of the OV7670/OV7171 image sensor. The OV7670/OV7171 includes:
+    •   Image Sensor Array (total array of 656 x 488 pixels, with active pixels 640 x 480 in YUV mode)
+    •   Analog Signal Processor
+    •   A/D Converters
+    •   Test Pattern Generator
+    •   Digital Signal Processor (DSP)
+    •   Image Scaler
+    •   Timing Generator
+    •   Digital Video Port
+    •   SCCB Interface
+    •   LED and Strobe Flash Control Output
+
+
+Figure 2 Functional Block Diagram
+
+
+                                                                                         Buffer      Buffer
+
+
+
+
+                                                                       Test
+                                                                      Pattern
+                                                                     Generator
+                                                    G
+                                                                                          DSP        Image               Video
+                                     Analog                                                                      FIFO
+                                                                                      (Lens shading     Scaler            Port
+                                   Processing                 A/D                      correction,                                         D[7:0]
+                                                                                       de-noise, white/
+                                                    R                                  black pixel
+                                                                         50/60 Hz      correction, auto
+                                                                                       white balance,
+                                                                           Auto        etc.)
+                                                    B                     Detect
+
+
+
+
+                                   Column Sense Amp            Exposure/Gain
+                                                                  Detect
+
+
+
+
+                     Row Select
+                                      Image Array
+                                      (656 x 488)
+                                                                                                                    Registers
+
+
+
+                                                                                                                       SCCB
+    Clock                         Video Timing Generator
+                                                                                                                     Interface
+                                                                      Exposure/Gain
+                                                                         Control
+
+
+    XCLK     STROBE HREF               PCLK     VSYNC RESET# PWDN                                                SIO_C      SIO_D
+
+                                                                                                                                    7670CSP_DS_002
+
+
+
+
+2              Proprietary to OmniVision Technologies, Inc.                                                      Version 1.4, August 21, 2006
+Omni     ision                                                                                              Functional Description
+
+
+
+Image Sensor Array                                                  Test Pattern Generator
+
+   The OV7670/OV7171 sensor has an image array of                       The Test Pattern Generator features the following:
+   656 x 488 pixels for a total of 320,128 pixels, of which             •   8-bar color bar pattern
+   640 x 480 pixels are active (307,200 pixels). Figure 3               •   Fade-to-gray color bar pattern
+   shows a cross-section of the image sensor array.
+                                                                        •   Shift "1" in output pin
+Figure 3 Image Sensor Array
+   Microlens
+
+                                                          Glass
+                                                                    Digital Signal Processor (DSP)
+
+                                                                        This block controls the interpolation from Raw data to
+                                                                        RGB and some image quality control.
+                                                                        •   Edge enhancement (a two-dimensional high pass
+                  Blue       Green        Red                               filter)
+                                                                        •   Color space converter (can change Raw data to RGB
+                                         7670CSP_DS_003
+                                                                            or YUV/YCbCr)
+                                                                        •   RGB matrix to eliminate color cross talk
+Timing Generator                                                        •   Hue and saturation control
+                                                                        •   White/black pixel correction
+   In general, the timing generator controls the following
+   functions:                                                           •   De-noise
+   •   Array control and frame generation                               •   Lens shading correction
+   •   Internal timing signal generation and distribution               •   Programmable gamma control
+   •   Frame rate timing                                                •   Transfer 10-bit data to 8-bit
+   •   Automatic Exposure Control (AEC)
+   •   External timing outputs (VSYNC, HREF/HSYNC, and
+       PCLK)                                                        Image Scaler
+
+                                                                        This block controls all output and data formatting required
+                                                                        prior to sending the image out. This block scales
+Analog Signal Processor                                                 YUV/RGB output from VGA to CIF and almost any size
+                                                                        under CIF.
+   This block performs all analog image functions including:
+   •   Automatic Gain Control (AGC)
+   •   Automatic White Balance (AWB)
+                                                                    Digital Video Port
+
+                                                                        Register bits COM2[1:0] increase IOL/IOH drive current
+A/D Converters                                                          and can be adjusted as a function of the customer’s
+                                                                        loading.
+   After the Analog Processing block, the bayer pattern Raw
+   signal is fed to a 10-bit analog-to-digital (A/D) converter
+   shared by G and BR channels. This A/D converter
+   operates at speeds up to 12 MHz and is fully synchronous
+                                                                    SCCB Interface
+   to the pixel rate (actual conversion rate is related to the
+   frame rate).                                                         The Serial Camera Control Bus (SCCB) interface controls
+                                                                        the CAMERACHIP sensor operation. Refer to OmniVision
+   In addition to the A/D conversion, this block also has the           Technologies Serial Camera Control Bus (SCCB)
+   following functions:                                                 Specification for detailed usage of the serial control port.
+   •    Digital Black-Level Calibration (BLC)
+   •    Optional U/V channel delay
+   •    Additional A/D range controls
+                                                                    LED and Strobe Flash Control Output
+                                                                        The OV7670/OV7171 has a Strobe mode that allows it to
+   In general, the combination of the A/D Range Multiplier              work with an external flash and LED.
+   and A/D Range Control sets the A/D range and maximum
+   value to allow the user to adjust the final image brightness
+   as a function of the individual application.
+
+Version 1.4, August 21, 2006                                      Proprietary to OmniVision Technologies, Inc.                    3
+Omni     ision                                                                                                      Pin Description
+
+
+Pin Description
+
+   Table 1           Pin Description
+
+        Pin Number       Name         Pin Type                                  Function/Description
+
+            A1         AVDD            Power        Analog power supply
+
+            A2         SIO_D             I/O        SCCB serial interface data I/O
+
+            A3         SIO_C            Input       SCCB serial interface clock input
+
+            A4         D1a             Output       YUV/RGB video component output bit[1]
+
+            A5         D3              Output       YUV/RGB video component output bit[3]
+
+                                                    Power Down Mode Selection
+            B1         PWDN           Input (0)b       0: Normal mode
+                                                       1: Power down mode
+
+            B2         VREF2         Reference      Reference voltage - connect to ground using a 0.1 µF capacitor
+
+            B3         AGND            Power        Analog ground
+
+            B4         D0              Output       YUV/RGB video component output bit[0]
+
+            B5         D2              Output       YUV/RGB video component output bit[2]
+
+           C1          DVDD            Power        Power supply (+1.8 VDC) for digital logic core
+
+           C2          VREF1         Reference      Reference voltage - connect to ground using a 0.1 µF capacitor
+
+           D1          VSYNC           Output       Vertical sync output
+
+           D2          HREF            Output       HREF output
+
+            E1         PCLK            Output       Pixel clock output
+
+            E2         STROBE          Output       LED/strobe control output
+
+            E3         XCLK             Input       System clock input
+
+            E4         D7              Output       YUV/RGB video component output bit[7]
+
+            E5         D5              Output       YUV/RGB video component output bit[5]
+
+            F1         DOVDD           Power        Digital power supply for I/O (1.7V ~ 3.0V)
+
+                                                    Clears all registers and resets them to their default values.
+            F2         RESET#           Input           0: Reset mode
+                                                        1: Normal mode
+
+            F3         DOGND           Power        Digital ground
+
+            F4         D6              Output       YUV/RGB video component output bit[6]
+
+            F5         D4              Output       YUV/RGB video component output bit[4]
+
+   a.     D[7:0] for 8-bit YUV or RGB (D[7] MSB, D[0] LSB)
+   b.     Input (0) represents an internal pull-down resistor.
+
+
+
+
+Version 1.4, August 21, 2006                                      Proprietary to OmniVision Technologies, Inc.                   4
+OV7670/OV7171                CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                    Omni       ision
+
+
+Electrical Characteristics
+
+    Table 2          Absolute Maximum Ratings
+     Ambient Storage Temperature                                                 -40ºC to +95ºC
+
+                                                                     VDD-A       4.5 V
+
+     Supply Voltages (with respect to Ground)                        VDD-C       3V
+
+                                                                     VDD-IO      4.5 V
+
+     All Input/Output Voltages (with respect to Ground)                          -0.3V to VDD-IO+0.5V
+
+     Lead-free Temperature, Surface-mount process                                245ºC
+
+    NOTE:      Exceeding the Absolute Maximum ratings shown above invalidates all AC and DC electrical specifications and may
+               result in permanent device damage.
+
+
+
+    Table 3          DC Characteristics (-30°C < TA < 70°C)
+
+         Symbol                Parameter                   Condition              Min         Typ             Max           Unit
+
+     VDD-A          DC supply voltage – Analog                   –               2.45         2.75             3.0              V
+
+     VDD-C          DC supply voltage – Digital Core             –               1.62          1.8            1.98              V
+
+     VDD-IO         DC supply voltage – I/O power                –                1.7             –            3.0              V
+
+     IDDA           Active (Operating) Current             See Note a                        10 + 8b                            mA
+
+     IDDS-SCCB      Standby Current                                                               1                             mA
+                                                           See Note c
+     IDDS-PWDN      Standby Current                                                               10           20               µA
+
+     VIH            Input voltage HIGH                       CMOS             0.7 x VDD-IO                                      V
+
+     VIL            Input voltage LOW                                                                     0.3 x VDD-IO          V
+
+     VOH            Output voltage HIGH                      CMOS             0.9 x VDD-IO                                      V
+
+     VOL            Output voltage LOW                                                                    0.1 x VDD-IO          V
+
+     IOH            Output current HIGH                    See Note d              8                                            mA
+
+     IOL            Output current LOW                                            15                                            mA
+
+     IL             Input/Output Leakage                 GND to VDD-IO                                         ±1               µA
+
+    a.     VDD-A = 2.5V, VDD-C = 1.8V, VDD-IO = 2.5V
+           IDDA = ∑{IDD-IO+ IDD-C + IDD-A}, fCLK = 24MHz at 30 fps YUV output, no I/O loading
+    b.     IDD-C = 10mA, IDD-A = 8mA, without loading
+    c.     VDD-A = 2.5V, VDD-C = 1.8V, VDD-IO = 2.5V
+           IDDS-SCCB refers to a SCCB-initiated Standby, while IDDS-PWDN refers to a PWDN pin-initiated Standby
+    d.     Standard Output Loading = 25pF, 1.2KΩ
+
+
+
+
+5                 Proprietary to OmniVision Technologies, Inc.                                          Version 1.4, August 21, 2006
+Omni   ision                                                                                             Electrical Characteristics
+
+
+   Table 4        Functional and AC Characteristics (-30°C < TA < 70°C)
+       Symbol                              Parameter                                Min          Typ            Max       Unit
+    Functional Characteristics
+                    A/D        Differential Non-Linearity                                       + 1/2                     LSB
+                    A/D        Integral Non-Linearity                                            +1                       LSB
+                    AGC        Range                                                                            30         dB
+                               Red/Blue Adjustment Range                                                        12         dB
+    Inputs (PWDN, CLK, RESET#)
+
+    fCLK            Input Clock Frequency                                           10           24             48        MHz
+
+    tCLK            Input Clock Period                                              21           42             100        ns
+
+    tCLK:DC         Clock Duty Cycle                                                45           50             55         %
+
+    tS:RESET        Setting time after software/hardware reset                                                   1         ms
+
+    tS:REG          Settling time for register change (10 frames required)                                      300        ms
+    SCCB Timing (see Figure 4)
+
+    fSIO_C          Clock Frequency                                                                             400       KHz
+
+    tLOW            Clock Low Period                                                1.3                                    μs
+
+    tHIGH           Clock High Period                                               600                                    ns
+
+    tAA             SIO_C low to Data Out valid                                     100                         900        ns
+
+    tBUF            Bus free time before new START                                  1.3                                    μs
+
+    tHD:STA         START condition Hold time                                       600                                    ns
+
+    tSU:STA         START condition Setup time                                      600                                    ns
+
+    tHD:DAT         Data-in Hold time                                                0                                     μs
+
+    tSU:DAT         Data-in Setup time                                              100                                    ns
+
+    tSU:STO         STOP condition Setup time                                       600                                    ns
+
+    tR, tF          SCCB Rise/Fall times                                                                        300        ns
+
+    tDH             Data-out Hold time                                              50                                     ns
+    Outputs (VSYNC, HREF, PCLK, and D[7:0] (see Figure 5, Figure 6, Figure 7, Figure 9, and Figure 10)
+
+    tPDV            PCLK[↓] to Data-out Valid                                                                    5         ns
+
+    tSU             D[7:0] Setup time                                               15                                     ns
+
+    tHD             D[7:0] Hold time                                                 8                                     ns
+
+    tPHH            PCLK[↓] to HREF[↑]                                               0                           5         ns
+
+    tPHL            PCLK[↓] to HREF[↓]                                               0                           5         ns
+
+                    • VDD:       VDD-C = 1.8V, VDD-A = 2.5V, VDD-IO = 2.5V
+                    • Rise/Fall Times: I/O:       5ns, Maximum
+    AC                                          SCCB: 300ns, Maximum
+    Conditions:     • Input Capacitance: 10pf
+                    • Output Loading: 25pF, 1.2KΩ to 2.5V
+                    • fCLK:     24MHz
+
+Version 1.4, August 21, 2006                                     Proprietary to OmniVision Technologies, Inc.                    6
+OV7670/OV7171                   CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                                                        Omni   ision
+
+
+Timing Specifications
+
+Figure 4 SCCB Timing Diagram
+
+                                        tF                                     t HIGH                             tR
+                                                           tLOW
+         SIO_C
+
+                                                          t HD:STA           t HD:DAT                        t SU:DAT
+                      tSU:STA                                                                                              tSU:STO
+
+         SIO_D
+             IN
+                                                                                                                                                             t BUF
+                                                                     tAA                              t DH
+         SIO_D
+           OUT
+                                                                                                                                                     7670CSP_DS_004
+
+
+
+
+Figure 5 Horizontal Timing
+
+                                                                     tPCLK
+
+              PCLK
+
+
+
+                                                  t PHL                                                                                             tPHL
+
+              HREF                                                                                (Row Data)
+
+                                                                     tSU
+                                                                             t HD
+
+
+             D[7:0]               Last Byte                       First Byte                                                    Last Byte
+
+                                                                             tPDV                                                           7670CSP_DS_005
+
+
+
+
+Figure 6 VGA Frame Timing
+
+                                                                                        510 x tLINE
+
+         VSYNC
+                                                                                              480 x tLINE
+                   3 x tLINE                  17 tLINE
+                                                                                        tLINE = 784 tP                               10 tLINE
+                                                                                        144 tP
+          HREF
+
+                                                               640 tP
+                                             80 tP                                       45 tP                   19 tP
+         HSYNC
+
+
+          D[7:0]                 Invalid Data                                                                                            Invalid Data
+
+                                             P0 - P639
+                                                                Row 0               Row 1          Row 2                 Row 479
+            NOTE:
+            For Raw data, tP = tPCLK
+            For YUV/RGB, tP = 2 x tPCLK                                                                                                           7670CSP_DS_006
+
+
+7            Proprietary to OmniVision Technologies, Inc.                                                                               Version 1.4, August 21, 2006
+Omni      ision                                                           Timing Specifications
+
+
+Figure 7 QVGA Frame Timing
+
+          VGA HREF
+       (see Figure 7,
+  VGA Frame Timing)
+
+
+
+
+         QVGA HREF
+
+
+                                                                                   7670CSP_DS_007
+
+
+
+
+Figure 8 QQVGA Frame Timing
+
+         VGA HREF
+      (see Figure 7,
+ VGA Frame Timing)
+
+
+
+       QQVGA HREF
+           (1 from 4,
+       120 from 480)
+                                                                                    7670CSP_DS_008
+
+
+
+
+Figure 9 CIF Frame Timing
+
+
+          VGA HREF
+       (see Figure 7,
+  VGA Frame Timing)
+
+
+
+           CIF HREF
+           (3 from 5)
+
+                                                                                    7670CSP_DS_009
+
+
+
+
+Figure 10 QCIF Frame Timing
+
+
+        QVGA HREF
+       (see Figure 7,
+ QVGA Frame Timing)
+
+
+
+          QCIF HREF
+           (3 from 5)
+                                                                                     7670CSP_DS_010
+
+
+
+
+Version 1.4, August 21, 2006   Proprietary to OmniVision Technologies, Inc.                           8
+OV7670/OV7171         CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                         Omni   ision
+
+
+Figure 11 RGB 565 Output Timing Diagram
+
+                                                      tPCLK
+
+            PCLK
+
+
+
+                                        t PHL                                                                 tPHL
+
+            HREF                                                      (Row Data)
+
+                                                      tSU
+                                                               t HD
+
+
+            D[7:0]       Last Byte                   First Byte                           Last Byte
+
+
+                                          tPDV
+
+
+
+                                        First Byte                    Second Byte
+                                 D[7]       R4                            G2       D[7]
+                                 D[6]                                              D[6]
+                                 D[5]                                     G0       D[5]
+                                 D[4]                                     B4       D[4]
+                                 D[3]       R0                                     D[3]
+                                 D[2]       G5                                     D[2]
+                                 D[1]                                              D[1]
+                                 D[0]       G3                            B0       D[0]               7670CSP_DS_011
+
+
+
+Figure 12 RGB 555 Output Timing Diagram
+
+                                                       tPCLK
+
+            PCLK
+
+
+
+                                        t PHL                                                                 tPHL
+
+            HREF                                                      (Row Data)
+
+                                                      tSU
+                                                               t HD
+
+
+            D[7:0]       Last Byte                   First Byte                           Last Byte
+
+
+                                          tPDV
+
+
+
+                                        First Byte                    Second Byte
+                                 D[7]           X                         G2       D[7]
+                                 D[6]       R4                                     D[6]
+                                 D[5]                                     G0       D[5]
+                                 D[4]                                     B4       D[4]
+                                 D[3]                                              D[3]
+                                 D[2]       R0                                     D[2]
+                                 D[1]       G4                                     D[1]
+                                 D[0]       G3                            B0       D[0]               7670CSP_DS_012
+
+
+
+
+9          Proprietary to OmniVision Technologies, Inc.                                         Version 1.4, August 21, 2006
+Omni   ision                                                                                                             Timing Specifications
+
+
+Figure 13 RGB 444 Output Timing Diagram
+
+                                                           tPCLK
+
+               PCLK
+
+
+
+                                             t PHL                                                                        tPHL
+
+               HREF                                                             (Row Data)
+
+                                                           tSU
+                                                                   t HD
+
+
+               D[7:0]          Last Byte                  First Byte                                  Last Byte
+
+
+                                               tPDV
+
+
+
+                                             First Byte                         Second Byte
+                                      D[7]           X                              G        D[7]
+                                                                                      3
+                                      D[6]                                          G        D[6]
+                                                                                      2
+                                      D[5]                                          G        D[5]
+                                                                                      1
+                                      D[4]                                          G0       D[4]
+                                      D[3]       R                                   B3      D[3]
+                                                   3
+                                      D[2]       R                                   B2      D[2]
+                                                   2
+                                      D[1]       R                                   B1      D[1]
+                                                   1
+                                      D[0]       R                                   B0      D[0]
+                                                      0                                                           7670CSP_DS_013
+
+
+
+
+Version 1.4, August 21, 2006                                              Proprietary to OmniVision Technologies, Inc.                     10
+OV7670/OV7171               CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                    Omni   ision
+
+
+Register Set
+     Table 5 provides a list and description of the Device Control registers contained in the OV7670/OV7171. For all register
+     Enable/Disable bits, ENABLE = 1 and DISABLE = 0. The device slave addresses are 42 for write and 43 for read.
+
+
+     Table 5       Device Control Register List
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                         Description
+                                                       AGC – Gain control gain setting
+         00          GAIN           00        RW          Bit[7:0]: AGC[7:0] (see VREF[7:6] (0x03) for AGC[9:8])
+                                                       • Range: [00] to [FF]
+                                                       AWB – Blue channel gain setting
+         01          BLUE           80        RW
+                                                       • Range: [00] to [FF]
+                                                       AWB – Red channel gain setting
+         02           RED           80        RW
+                                                       • Range: [00] to [FF]
+                                                       Vertical Frame Control
+                                                               Bit[7:6]:   AGC[9:8] (see GAIN[7:0] (0x00) for AGC[7:0])
+         03          VREF           00        RW               Bit[5:4]:   Reserved
+                                                               Bit[3:2]:   VREF end low 2 bits (high 8 bits at VSTOP[7:0]
+                                                               Bit[1:0]:   VREF start low 2 bits (high 8 bits at VSTRT[7:0]
+                                                       Common Control 1
+                                                               Bit[7]:     Reserved
+                                                               Bit[6]:     CCIR656 format
+         04          COM1           00        RW                           0: Disable
+                                                                           1: Enable
+                                                               Bit[5:2]:   Reserved
+                                                               Bit[1:0]:   AEC low 2 LSB (see registers AECHH for AEC[15:10] and
+                                                                           AECH for AEC[9:2])
+                                                       U/B Average Level
+         05          BAVE           00        RW
+                                                       Automatically updated based on chip output format
+                                                       Y/Gb Average Level
+         06         GbAVE           00        RW
+                                                       Automatically updated based on chip output format
+                                                       Exposure Value - AEC MSB 5 bits
+                                                               Bit[7:6]:   Reserved
+         07         AECHH           00        RW
+                                                               Bit[5:0]:   AEC[15:10] (see registers AECH for AEC[9:2] and COM1
+                                                                           for AEC[1:0])
+                                                       V/R Average Level
+         08          RAVE           00        RW
+                                                       Automatically updated based on chip output format
+                                                       Common Control 2
+                                                               Bit[7:5]:   Reserved
+                                                               Bit[4]:     Soft sleep mode
+                                                               Bit[3:2]:   Reserved
+         09          COM2           01        RW               Bit[1:0]:   Output drive capability
+                                                                           00: 1x
+                                                                           01: 2x
+                                                                           10: 3x
+                                                                           11: 4x
+
+
+11              Proprietary to OmniVision Technologies, Inc.                                            Version 1.4, August 21, 2006
+Omni   ision                                                                                                Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)    R/W                                 Description
+        0A          PID          76      R     Product ID Number MSB (Read only)
+        0B          VER          73      R     Product ID Number LSB (Read only)
+                                               Common Control 3
+                                                  Bit[7]:     Reserved
+                                                  Bit[6]:     Output data MSB and LSB swap
+                                                  Bit[5]:     Tri-state option for output clock at power-down period
+                                                              0: Tri-state at this period
+                                                              1: No tri-state at this period
+                                                  Bit[4]:     Tri-state option for output data at power-down period
+                                                              0: Tri-state at this period
+                                                              1: No tri-state at this period
+        0C         COM3          00      RW       Bit[3]:     Scale enable
+                                                              0: Disable
+                                                              1: Enable - if set to a pre-defined format (see
+                                                                   COM7[5:3]), then COM14[3] must be set to 1 for
+                                                                   manual adjustment.
+                                                  Bit[2]:     DCW enable
+                                                              0: Disable
+                                                              1: Enable - if set to a pre-defined format (see
+                                                                   COM7[5:3]), then COM14[3] must be set to 1 for
+                                                                   manual adjustment.
+                                                  Bit[1:0]:   Reserved
+                                               Common Control 4
+                                                  Bit[7:6]:   Reserved
+                                                  Bit[5:4]:   Average option (must be same value as COM17[7:6])
+        0D         COM4          00      RW                   00: Full window
+                                                              01: 1/2 window
+                                                              10: 1/4 window
+                                                              11: 1/4 window
+                                                  Bit[3:0]:   Reserved
+                                               Common Control 5
+        0E         COM5          01      RW
+                                                  Bit[7:0]:   Reserved
+                                               Common Control 6
+                                                  Bit[7]:     Output of optical black line option
+                                                              0: Disable HREF at optical black
+                                                              1: Enable HREF at optical black
+        0F         COM6          43      RW       Bit[6:2]:   Reserved
+                                                  Bit[1]:     Reset all timing when format changes
+                                                              0: No reset
+                                                              1: Resets timing
+                                                  Bit[0]:     Reserved
+                                               Exposure Value
+        10         AECH          40      RW       Bit[7:0]:   AEC[9:2] (see registers AECHH for AEC[15:10] and
+                                                              COM1 for AEC[1:0])
+
+
+
+
+Version 1.4, August 21, 2006                            Proprietary to OmniVision Technologies, Inc.                   12
+OV7670/OV7171              CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                       Omni    ision
+
+
+     Table 5       Device Control Register List (Continued)
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                         Description
+                                                       Internal Clock
+                                                               Bit[7]:     Reserved
+         11        CLKRC            80        RW               Bit[6]:     Use external clock directly (no clock pre-scale available)
+                                                               Bit[5:0]:   Internal clock pre-scalar
+                                                                           F(internal clock) = F(input clock)/(Bit[5:0]+1)
+                                                                           •    Range: [0 0000] to [1 1111]
+                                                       Common Control 7
+                                                               Bit[7]:     SCCB Register Reset
+                                                                           0: No change
+                                                                           1: Resets all registers to default values
+                                                               Bit[6]:     Reserved
+                                                               Bit[5]:     Output format - CIF selection
+                                                               Bit[4]:     Output format - QVGA selection
+                                                               Bit[3]:     Output format - QCIF selection
+                                                               Bit[2]:     Output format - RGB selection (see below)
+         12         COM7            00        RW
+                                                               Bit[1]:     Color bar
+                                                                           0: Disable
+                                                                           1: Enable
+                                                               Bit[0]:     Output format - Raw RGB (see below)
+
+                                                                                    COM7[2]          COM7[0]
+                                                       YUV                            0                0
+                                                       RGB                            1                0
+                                                       Bayer RAW                      0                1
+                                                       Processed Bayer RAW            1                1
+                                                       Common Control 8
+                                                               Bit[7]:     Enable fast AGC/AEC algorithm
+                                                               Bit[6]:     AEC - Step size limit
+                                                                           0: Step size is limited to vertical blank
+                                                                           1: Unlimited step size
+                                                               Bit[5]:     Banding filter ON/OFF - In order to turn ON the banding
+                                                                           filter, BD50ST (0x9D) or BD60ST (0x9E) must be set to a
+         13         COM8            8F        RW                           non-zero value.
+                                                                           0: OFF
+                                                                           1: ON
+                                                               Bit[4:3]:   Reserved
+                                                               Bit[2]:     AGC Enable
+                                                               Bit[1]:     AWB Enable
+                                                               Bit[0]:     AEC Enable
+
+
+
+
+13              Proprietary to OmniVision Technologies, Inc.                                             Version 1.4, August 21, 2006
+Omni   ision                                                                                                  Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)    R/W                                  Description
+                                               Common Control 9
+                                                   Bit[7]:     Reserved
+                                                   Bit[6:4]:   Automatic Gain Ceiling - maximum AGC value
+                                                               000: 2x
+                                                               001: 4x
+                                                               010: 8x
+        14         COM9          4A      RW                    011: 16x
+                                                               100: 32x
+                                                               101   64x
+                                                               110: 128x
+                                                               111: Not allowed
+                                                   Bit[3:1]:   Reserved
+                                                   Bit[0]:     Freeze AGC/AEC
+                                               Common Control 10
+                                                   Bit[7]:     Reserved
+                                                   Bit[6]:     HREF changes to HSYNC
+                                                   Bit[5]:     PCLK output option
+                                                               0: Free running PCLK
+                                                               1: PCLK does not toggle during horizontal blank
+        15        COM10          00      RW        Bit[4]:     PCLK reverse
+                                                   Bit[3]:     HREF reverse
+                                                   Bit[2]:     VSYNC option
+                                                               0: VSYNC changes on falling edge of PCLK
+                                                               1: VSYNC changes on rising edge of PCLK
+                                                   Bit[1]:     VSYNC negative
+                                                   Bit[0]:     HSYNC negative
+        16         RSVD          XX       –    Reserved
+                                               Output Format - Horizontal Frame (HREF column) start high 8-bit (low
+        17        HSTART         11      RW
+                                               3 bits are at HREF[2:0])
+                                               Output Format - Horizontal Frame (HREF column) end high 8-bit (low
+        18        HSTOP          61      RW
+                                               3 bits are at HREF[5:3])
+                                               Output Format - Vertical Frame (row) start high 8-bit (low 2 bits are at
+        19         VSTRT         03      RW
+                                               VREF[1:0])
+                                               Output Format - Vertical Frame (row) end high 8-bit (low 2 bits are at
+        1A        VSTOP          7B      RW
+                                               VREF[3:2])
+                                               Data Format - Pixel Delay Select (delays timing of the D[7:0] data relative
+                                               to HREF in pixel units)
+        1B         PSHFT         00      RW
+                                               • Range: [00] (no delay) to [FF] (256 pixel delay which accounts for
+                                                 whole array)
+        1C         MIDH          7F      R     Manufacturer ID Byte – High      (Read only = 0x7F)
+        1D         MIDL          A2      R     Manufacturer ID Byte – Low       (Read only = 0xA2)
+
+
+
+
+Version 1.4, August 21, 2006                             Proprietary to OmniVision Technologies, Inc.                     14
+OV7670/OV7171               CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                     Omni     ision
+
+
+     Table 5       Device Control Register List (Continued)
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                         Description
+                                                       Mirror/VFlip Enable
+                                                               Bit[7:6]:   Reserved
+                                                               Bit[5]:     Mirror
+                                                                           0: Normal image
+                                                                           1: Mirror image
+        1E          MVFP            01        RW               Bit[4]:     VFlip enable
+                                                                           0: Normal image
+                                                                           1: Vertically flip image
+                                                               Bit[3]:     Reserved
+                                                               Bit[2]:     Black sun enable
+                                                               Bit[1:0]:   Reserved
+         1F         LAEC            00        RW       Reserved
+                                                       ADC Control
+                                                               Bit[7:4]:   Reserved
+                                                               Bit[3]:     ADC range adjustment
+                                                                           0: 1x range
+         20       ADCCTR0           04        RW                           1: 1.5x range
+                                                               Bit[2:0]:   ADC reference adjustment
+                                                                           000: 0.8x
+                                                                           100: 1x
+                                                                           111: 1.2x
+         21       ADCCTR1           02        RW               Bit[7:0]:   Reserved
+         22       ADCCTR2           01        RW               Bit[7:0]:   Reserved
+         23       ADCCTR3           00        RW               Bit[7:0]:   Reserved
+         24          AEW            75        RW       AGC/AEC - Stable Operating Region (Upper Limit)
+         25          AEB            63        RW       AGC/AEC - Stable Operating Region (Lower Limit)
+                                                       AGC/AEC Fast Mode Operating Region
+         26          VPT            D4        RW               Bit[7:4]:   High nibble of upper limit of fast mode control zone
+                                                               Bit[3:0]:   High nibble of lower limit of fast mode control zone
+                                                       B Channel Signal Output Bias (effective only when COM6[3] = 1)
+                                                               Bit[7]:     Bias adjustment sign
+         27         BBIAS           80        RW                           0: Add bias
+                                                                           1: Subtract bias
+                                                               Bit[6:0]:   Bias value of 10-bit range
+                                                       Gb Channel Signal Output Bias (effective only when COM6[3] = 1)
+                                                               Bit[7]:     Bias adjustment sign
+         28        GbBIAS           80        RW                           0: Add bias
+                                                                           1: Subtract bias
+                                                               Bit[6:0]:   Bias value of 10-bit range
+         29         RSVD           XX           –      Reserved
+                                                       Dummy Pixel Insert MSB
+                                                               Bit[7:4]:   4 MSB for dummy pixel insert in horizontal direction
+        2A         EXHCH            00        RW
+                                                               Bit[3:2]:   HSYNC falling edge delay 2 MSB
+                                                               Bit[1:0]:   HSYNC rising edge delay 2 MSB
+
+15              Proprietary to OmniVision Technologies, Inc.                                             Version 1.4, August 21, 2006
+Omni    ision                                                                                                Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)    R/W                                  Description
+                                               Dummy Pixel Insert LSB
+        2B        EXHCL          00      RW
+                                               8 LSB for dummy pixel insert in horizontal direction
+                                               R Channel Signal Output Bias (effective only when COM6[3] = 1)
+                                                   Bit[7]:     Bias adjustment sign
+        2C         RBIAS         80      RW                    0: Add bias
+                                                               1: Subtract bias
+                                                   Bit[6:0]:   Bias value of 10-bit range
+        2D         ADVFL         00      RW    LSB of Insert Dummy Lines in Vertical Direction (1 bit equals 1 line)
+        2E        ADVFH          00      RW    MSB of Insert Dummy Lines in Vertical Direction
+        2F         YAVE          00      RW    Y/G Channel Average Value
+        30        HSYST          08      RW    HSYNC Rising Edge Delay (low 8 bits)
+        31        HSYEN          30      RW    HSYNC Falling Edge Delay (low 8 bits)
+                                               HREF Control
+                                                   Bit[7:6]:   HREF edge offset to data output
+        32         HREF          80      RW
+                                                   Bit[5:3]:   HREF end 3 LSB (high 8 MSB at register HSTOP)
+                                                   Bit[2:0]:   HREF start 3 LSB (high 8 MSB at register HSTART)
+                                               Array Current Control
+        33         CHLF          08      RW
+                                                   Bit[7:0]:   Reserved
+                                               Array Reference Control
+        34        ARBLM          11      RW
+                                                   Bit[7:0]:   Reserved
+       35-36       RSVD          XX       –    Reserved
+                                               ADC Control
+        37          ADC          3F      RW
+                                                   Bit[7:0]:   Reserved
+                                               ADC and Analog Common Mode Control
+        38         ACOM          01      RW
+                                                   Bit[7:0]:   Reserved
+                                               ADC Offset Control
+        39         OFON          00      RW
+                                                   Bit[7:0]:   Reserved
+
+
+
+
+Version 1.4, August 21, 2006                             Proprietary to OmniVision Technologies, Inc.                  16
+OV7670/OV7171               CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                    Omni     ision
+
+
+     Table 5       Device Control Register List (Continued)
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                         Description
+                                                       Line Buffer Test Option
+                                                               Bit[7:6]:   Reserved
+                                                               Bit[5]:     Negative image enable
+                                                                           0: Normal image
+                                                                           1: Negative image
+                                                               Bit[4]:     UV output value
+                                                                           0: Use normal UV output
+                                                                           1: Use fixed UV value set in registers MANU and MANV
+                                                                               as UV output instead of chip output
+                                                               Bit[3]:     Output sequence (use with register COM13[0] (0x3D))
+                                                                           TSLB[3], COM13[0]:
+        3A           TSLB           0D        RW                           00: Y U Y V
+                                                                           01: Y V Y U
+                                                                           10: U Y V Y
+                                                                           11: V Y U Y
+                                                               Bit[2:1]:   Reserved
+                                                               Bit[0]:     Auto output window
+                                                                           0: Sensor DOES NOT automatically set window after
+                                                                               resolution change. The companion backend
+                                                                               processor can adjust the output window immediately
+                                                                               after changing the resolution
+                                                                           1: Sensor automatically sets output window when
+                                                                               resolution changes. After resolution changes, the
+                                                                               companion backend processor must adjust the
+                                                                               output window after the next VSYNC pulse.
+                                                       Common Control 11
+                                                               Bit[7]:     Night mode
+                                                                           0: Night mode disable
+                                                                           1: Night mode enable - The frame rate is reduced
+                                                                               automatically while the minimum frame rate is limited
+                                                                               by COM11[6:5]. Also, ADVFH and ADVFL will be
+                                                                               automatically updated.
+                                                               Bit[6:5]:   Minimum frame rate of night mode
+                                                                           00: Same as normal mode frame rate
+                                                                           01: 1/2 of normal mode frame rate
+                                                                           10: 1/4 of normal mode frame rate
+        3B         COM11            00        RW                           11: 1/8 of normal mode frame rate
+                                                               Bit[4]:     D56_Auto
+                                                                           0: Disable 50/60 Hz auto detection
+                                                                           1: Enable 50/60 Hz auto detection
+                                                               Bit[3]:     Banding filter value select (effective only when
+                                                                           COM11[4] = 0)
+                                                                           0: Select BD60ST[7:0] (0x9E) as Banding Filter Value
+                                                                           1: Select BD50ST[7:0] (0x9D) as Banding Filter Value
+                                                               Bit[2]:     Reserved
+                                                               Bit[1]:     Exposure timing can be less than limit of banding filter
+                                                                           when light is too strong
+                                                               Bit[0]:     Reserved
+
+
+
+
+17              Proprietary to OmniVision Technologies, Inc.                                            Version 1.4, August 21, 2006
+Omni   ision                                                                                                Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)    R/W                                 Description
+                                               Common Control 12
+                                                  Bit[7]:     HREF option
+        3C        COM12          68      RW                   0: No HREF when VSYNC is low
+                                                              1: Always has HREF
+                                                  Bit[6:0]:   Reserved
+                                               Common Control 13
+                                                  Bit[7]:     Gamma enable
+                                                  Bit[6]:     UV saturation level - UV auto adjustment. Result is saved
+                                                              in register SATCTR[3:0] (0xC9)
+                                                  Bit[5:1]:   Reserved
+        3D        COM13          88      RW       Bit[0]:     UV swap (use with register TSLB[3] (0x3A))
+                                                              TSLB[3], COM13[0]:
+                                                              00: Y U Y V
+                                                              01: Y V Y U
+                                                              10: U Y V Y
+                                                              11: V Y U Y
+                                               Common Control 14
+                                                  Bit[7:5]:   Reserved
+                                                  Bit[4]:     DCW and scaling PCLK enable
+                                                              0: Normal PCLK
+                                                              1: DCW and scaling PCLK, controlled by register
+                                                                  COM14[2:0] and SCALING_PCLK_DIV[3:0] (0x73))
+                                                  Bit[3]:     Manual scaling enable for pre-defined resolution modes
+                                                              such as CIF, QCIF, and QVGA
+        3E        COM14          00      RW                   0: Scaling parameter cannot be adjusted manually
+                                                              1: Scaling parameter can be adjusted manually
+                                                  Bit[2:0]:   PCLK divider (only when COM14[4] = 1)
+                                                              000: Divided by 1
+                                                              001: Divided by 2
+                                                              010: Divided by 4
+                                                              011: Divided by 8
+                                                              100: Divided by 16
+                                                              101~111: Not allowed
+                                               Edge Enhancement Adjustment
+        3F         EDGE          00      RW       Bit[7:5]:   Reserved
+                                                  Bit[4:0]:   Edge enhancement factor
+                                               Common Control 15
+                                                  Bit[7:6]:   Data format - output full range enable
+                                                              0x: Output range: [10] to [F0]
+                                                              10: Output range: [01] to [FE]
+                                                              11: Output range: [00] to [FF]
+        40        COM15          C0      RW       Bit[5:4]:   RGB 555/565 option (must set COM7[2] = 1 and
+                                                              COM7[0] = 0)
+                                                              x0: Normal RGB output
+                                                              01: RGB 565, effective only when RGB444[1] is low
+                                                              11: RGB 555, effective only when RGB444[1] is low
+                                                  Bit[3:0]:   Reserved
+
+
+
+Version 1.4, August 21, 2006                            Proprietary to OmniVision Technologies, Inc.                  18
+OV7670/OV7171              CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                     Omni     ision
+
+
+     Table 5       Device Control Register List (Continued)
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                         Description
+                                                       Common Control 16
+                                                               Bit[7:6]:   Reserved
+                                                               Bit[5]:     Enable edge enhancement threshold auto-adjustment for
+                                                                           YUV output (result is saved in register EDGE[4:0] (0x3F)
+                                                                           and range is controlled by registers REG75[4:0] (0x75)
+                                                                           and REG76[4:0] (0x76))
+                                                                           0: Disable
+                                                                           1: Enable
+                                                               Bit[4]:     De-noise threshold auto-adjustment (result is saved in
+         41        COM16            08        RW                           register DNSTH (0x4C) and range is controlled by register
+                                                                           REG77[7:0] (0x77))
+                                                                           0: Disable
+                                                                           1: Enable
+                                                               Bit[3]:     AWB gain enable
+                                                               Bit[2]:     Reserved
+                                                               Bit[1]:     Color matrix coefficient double option
+                                                                           0: Original matrix
+                                                                           1: Double of original matrix
+                                                               Bit[0]:     Reserved
+                                                       Common Control 17
+                                                               Bit[7:6]:   AEC window must be the same value as COM4[5:4]
+                                                                           00: Normal
+                                                                           01: 1/2
+                                                                           10: 1/4
+         42        COM17            00        RW                           11: 1/4
+                                                               Bit[5:4]:   Reserved
+                                                               Bit[3]:     DSP color bar enable
+                                                                           0: Disable
+                                                                           1: Enable
+                                                               Bit[2:0]:   Reserved
+         43        AWBC1            14        RW       Reserved
+         44        AWBC2            F0        RW       Reserved
+         45        AWBC3            45        RW       Reserved
+         46        AWBC4            61        RW       Reserved
+         47        AWBC5            51        RW       Reserved
+         48        AWBC6            79        RW       Reserved
+       49-4A        RSVD            XX          –      Reserved
+                                                       Register 4B
+        4B         REG4B            00        RW               Bit[7:1]:   Reserved
+                                                               Bit[0]:     UV average enable
+        4C         DNSTH            00        RW       De-noise Strength
+       4D-4E        RSVD           XX           –      Reserved
+         4F         MTX1            40        RW       Matrix Coefficient 1
+         50         MTX2            34        RW       Matrix Coefficient 2
+
+
+19              Proprietary to OmniVision Technologies, Inc.                                             Version 1.4, August 21, 2006
+Omni    ision                                                                                              Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)    R/W                                  Description
+        51         MTX3          0C      RW    Matrix Coefficient 3
+        52         MTX4          17      RW    Matrix Coefficient 4
+        53         MTX5          29      RW    Matrix Coefficient 5
+        54         MTX6          40      RW    Matrix Coefficient 6
+        55        BRIGHT         00      RW    Brightness Control
+        56       CONTRAS         40      RW    Contrast Control
+
+        57      CONTRAS-         80      RW    Contrast Center
+                 CENTER
+                                               Matrix Coefficient Sign for Coefficient 5 to 0
+                                                   Bit[7]:     Auto contrast center enable
+                                                               0: Disable, center is set by register
+                                                                   CONTRAS-CENTER (0x57)
+                                                               1: Enable, register CONTRAS-CENTER is updated
+        58         MTXS          1E      RW                        automatically
+                                                   Bit[6]:     Reserved
+                                                   Bit[5:0]:   Matrix coefficient sign
+                                                               0: Plus
+                                                               1: Minus
+       59-61       RSVD          XX       –    AWB Control
+                                               Lens Correction Option 1 - X Coordinate of Lens Correction Center
+        62         LCC1          00      RW
+                                               Relative to Array Center
+                                               Lens Correction Option 2 - Y Coordinate of Lens Correction Center
+        63         LCC2          00      RW
+                                               Relative to Array Center
+                                               Lens Correction Option 3
+                                               G Channel Compensation Coefficient when LCC5[2] (0x66) is 1
+        64         LCC3          50      RW
+                                               R, G, and B Channel Compensation Coefficient when LCC5[2] (0x66) is
+                                               0
+                                               Lens Correction Option 4 - Radius of the circular section where no
+        65         LCC4          30      RW
+                                               compensation applies
+                                               Lens Correction Control 5
+                                                   Bit[7:3]:   Reserved
+                                                   Bit[2]:     Lens correction control select
+                                                               0: R, G, and B channel compensation coefficient is set
+                                                                   by register LCC3 (0x64)
+        66         LCC5          00      RW                    1: R, G, and B channel compensation coefficient is set
+                                                                   by registers LCC6, LCC3, and LCC7, respectively
+                                                   Bit[1]:     Reserved
+                                                   Bit[0]:     Lens correction enable
+                                                               0: Disable
+                                                               1: Enable
+        67         MANU          80      RW    Manual U Value (effective only when register TSLB[4] is high)
+        68         MANV          80      RW    Manual V Value (effective only when register TSLB[4] is high)
+
+
+
+
+Version 1.4, August 21, 2006                             Proprietary to OmniVision Technologies, Inc.                   20
+OV7670/OV7171               CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                      Omni    ision
+
+
+     Table 5       Device Control Register List (Continued)
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                         Description
+                                                       Fix Gain Control
+                                                               Bit[7:6]:   Fix gain for Gr channel
+                                                                           00: 1x
+                                                                           01: 1.25x
+                                                                           10: 1.5x
+                                                                           11: 1.75x
+                                                               Bit[5:4]:   Fix gain for Gb channel
+                                                                           00: 1x
+                                                                           01: 1.25x
+                                                                           10: 1.5x
+         69          GFIX           00        RW                           11: 1.75x
+                                                               Bit[3:2]:   Fix gain for R channel
+                                                                           00: 1x
+                                                                           01: 1.25x
+                                                                           10: 1.5x
+                                                                           11: 1.75x
+                                                               Bit[1:0]:   Fix gain for B channel
+                                                                           00: 1x
+                                                                           01: 1.25x
+                                                                           10: 1.5x
+                                                                           11: 1.75x
+        6A          GGAIN           00        RW       G Channel AWB Gain
+                                                               Bit[7:6]:   PLL control
+                                                                           00: Bypass PLL
+                                                                           01: Input clock x4
+                                                                           10: Input clock x6
+                                                                           11: Input clock x8
+        6B          DBLV            0A        RW
+                                                               Bit[5]:     Reserved
+                                                               Bit[4]:     Regulator control
+                                                                           0: Enable internal regulator
+                                                                           1: Bypass internal regulator
+                                                               Bit[3:0]:   Reserved
+        6C        AWBCTR3           02        RW       AWB Control 3
+        6D        AWBCTR2           55        RW       AWB Control 2
+        6E        AWBCTR1           C0        RW       AWB Control 1
+         6F       AWBCTR0           9A        RW       AWB Control 0
+                                                               Bit[7]:     Test_pattern[0] - works with test_pattern[1] test_pattern
+                                                                           (SCALING_XSC[7], SCALING_YSC[7]):
+                                                                           00: No test output
+         70       SCALING_          3A        RW                           01: Shifting "1"
+                    XSC
+                                                                           10: 8-bar color bar
+                                                                           11: Fade to gray color bar
+                                                               Bit[6:0]:   Horizontal scale factor
+
+
+
+
+21              Proprietary to OmniVision Technologies, Inc.                                             Version 1.4, August 21, 2006
+Omni   ision                                                                                                 Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)    R/W                                 Description
+                                                  Bit[7]:     Test_pattern[1] - works with test_pattern[0] test_pattern
+                                                              (SCALING_XSC[7], SCALING_YSC[7]):
+                                                              00: No test output
+        71       SCALING_        35      RW                   01: Shifting "1"
+                   YSC
+                                                              10: 8-bar color bar
+                                                              11: Fade to gray color bar
+                                                  Bit[6:0]:   Vertical scale factor
+                                               DCW Control
+                                                  Bit[7]:     Vertical average calculation option
+                                                              0: Vertical truncation
+                                                              1: Vertical rounding
+                                                  Bit[6]:     Vertical down sampling option
+                                                              0: Vertical truncation
+                                                              1: Vertical rounding
+                                                  Bit[5:4]:   Vertical down sampling rate
+                                                              00: No vertical down sampling
+                                                              01: Vertical down sample by 2
+                                                              10: Vertical down sample by 4
+        72       SCALING_        11      RW
+                 DCWCTR                                       11: Vertical down sample by 8
+                                                  Bit[3]:     Horizontal average calculation option
+                                                              0: Horizontal truncation
+                                                              1: Horizontal rounding
+                                                  Bit[2]:     Horizontal down sampling option
+                                                              0: Horizontal truncation
+                                                              1: Horizontal rounding
+                                                  Bit[1:0]:   Horizontal down sampling rate
+                                                              00: No horizontal down sampling
+                                                              01: Horizontal down sample by 2
+                                                              10: Horizontal down sample by 4
+                                                              11: Horizontal down sample by 8
+                                                  Bit[7:4]:   Reserved
+                                                  Bit[3]:     Bypass clock divider for DSP scale control
+                                                              0: Enable clock divider
+                                                              1: Bypass clock divider
+                                                  Bit[2:0]:   Clock divider control for DSP scale control (valid only
+                 SCALING_                                     when COM14[3] = 1). Should change with COM14[2:0].
+        73       PCLK_DIV        00      RW
+                                                              000: Divided by 1
+                                                              001: Divided by 2
+                                                              010: Divided by 4
+                                                              011: Divided by 8
+                                                              100: Divided by 16
+                                                              101~111: Not allowed
+
+
+
+
+Version 1.4, August 21, 2006                            Proprietary to OmniVision Technologies, Inc.                      22
+OV7670/OV7171              CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                   Omni    ision
+
+
+     Table 5       Device Control Register List (Continued)
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                        Description
+                                                       Register 74
+                                                               Bit[7:5]:   Reserved
+                                                               Bit[4]:     DG_Manu
+                                                                           0: Digital gain control by VREF[7:6]
+                                                                           1: Digital gain control by REG74[1:0]
+         74         REG74           00        RW               Bit[3:2]:   Reserved
+                                                               Bit[1:0]:   Digital gain manual control
+                                                                           00: Bypass
+                                                                           01: 1x
+                                                                           10: 2x
+                                                                           11: 4x
+                                                       Register 75
+         75         REG75           0F        RW               Bit[7:5]:   Reserved
+                                                               Bit[4:0]:   Edge enhancement lower limit
+                                                       Register 76
+                                                               Bit[7]:     Black pixel correction enable
+                                                                           0: Disable
+                                                                           1: Enable
+         76         REG76           01        RW               Bit[6]:     White pixel correction enable
+                                                                           0: Disable
+                                                                           1: Enable
+                                                               Bit[5]:     Reserved
+                                                               Bit[4:0]:   Edge enhancement higher limit
+                                                       Register 77
+         77         REG77           10        RW
+                                                               Bit[7:0]:   De-noise offset
+       78-79        RSVD           XX           –      Reserved
+                                                       Gamma Curve Highest Segment Slope - calculated as follows:
+        7A          SLOP            24        RW
+                                                       SLOP[7:0] = (0x100 - GAM15[7:0]) x 4/3
+        7B          GAM1            04        RW       Gamma Curve 1st Segment Input End Point 0x04 Output Value
+        7C          GAM2            07        RW       Gamma Curve 2nd Segment Input End Point 0x08 Output Value
+        7D          GAM3            10        RW       Gamma Curve 3rd Segment Input End Point 0x10 Output Value
+        7E          GAM4            28        RW       Gamma Curve 4th Segment Input End Point 0x20 Output Value
+         7F         GAM5            36        RW       Gamma Curve 5th Segment Input End Point 0x28 Output Value
+         80         GAM6            44        RW       Gamma Curve 6th Segment Input End Point 0x30 Output Value
+         81         GAM7            52        RW       Gamma Curve 7th Segment Input End Point 0x38 Output Value
+         82         GAM8            60        RW       Gamma Curve 8th Segment Input End Point 0x40 Output Value
+         83         GAM9            6C        RW       Gamma Curve 9th Segment Input End Point 0x48 Output Value
+         84        GAM10            78        RW       Gamma Curve 10th Segment Input End Point 0x50 Output Value
+         85         GAM11           8C        RW       Gamma Curve 11th Segment Input End Point 0x60 Output Value
+         86        GAM12            9E        RW       Gamma Curve 12th Segment Input End Point 0x70 Output Value
+         87        GAM13           BB         RW       Gamma Curve 13th Segment Input End Point 0x90 Output Value
+         88        GAM14            D2        RW       Gamma Curve 14th Segment Input End Point 0xB0 Output Value
+
+23              Proprietary to OmniVision Technologies, Inc.                                           Version 1.4, August 21, 2006
+Omni    ision                                                                                               Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)    R/W                                 Description
+        89        GAM15          E5      RW    Gamma Curve 15th Segment Input End Point 0xD0 Output Value
+       8A-8B       RSVD          XX       –    Reserved
+                                                   Bit[7:2]:   Reserved
+                                                   Bit[1]:     RGB444 enable, effective only when COM15[4] is high
+                                                               0: Disable
+        8C        RGB444         00      RW                    1: Enable
+                                                   Bit[0]:     RGB444 word format
+                                                               0: xR GB
+                                                               1: RG Bx
+       8D-91       RSVD          XX       –    Reserved
+        92        DM_LNL         00      RW    Dummy Line low 8 bits
+        93        DM_LNH         00      RW    Dummy Line high 8 bits
+        94         LCC6          50      RW    Lens Correction Option 6 (effective only when LCC5[2] is high)
+        95         LCC7          50      RW    Lens Correction Option 7 (effective only when LCC5[2] is high)
+       96-9C       RSVD          XX       –    Reserved
+                                               50 Hz Banding Filter Value
+        9D        BD50ST         99      RW
+                                               (effective only when COM8[5] is high and COM11[3] is high)
+                                               60 Hz Banding Filter Value
+        9E        BD60ST         7F      RW
+                                               (effective only when COM8[5] is high and COM11[3] is low)
+        9F        HAECC1         C0      RW    Histogram-based AEC/AGC Control 1
+        A0        HAECC2         90      RW    Histogram-based AEC/AGC Control 2
+        A1         RSVD          XX       –    Reserved
+
+                 SCALING_                      Pixel Clock Delay
+        A2        PCLK_          02      RW        Bit[7]:     Reserved
+                  DELAY                            Bit[6:0]:   Scaling output delay
+        A3         RSVD          XX       –    Reserved
+                                                   Bit[7:4]:   Reserved
+                                                   Bit[3]:     Auto frame rate adjustment control
+                                                               0: Double exposure time
+                                                               1: Reduce frame rate by half
+        A4       NT_CTRL         00      RW        Bit[2]:     Reserved
+                                                   Bit[1:0]:   Auto frame rate adjustment switch point
+                                                               00: Insert dummy row at 2x gain
+                                                               01: Insert dummy row at 4x gain
+                                                               10: Insert dummy row at 8x gain
+        A5       BD50MAX         0F      RW    50Hz Banding Step Limit
+        A6        HAECC3         F0      RW    Histogram-based AEC/AGC Control 3
+        A7        HAECC4         C1      RW    Histogram-based AEC/AGC Control 4
+        A8        HAECC5         F0      RW    Histogram-based AEC/AGC Control 5
+        A9        HAECC6         C1      RW    Histogram-based AEC/AGC Control 6
+
+
+
+Version 1.4, August 21, 2006                             Proprietary to OmniVision Technologies, Inc.                24
+OV7670/OV7171               CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                  Omni     ision
+
+
+     Table 5       Device Control Register List (Continued)
+
+      Address      Register      Default
+       (Hex)        Name          (Hex)       R/W                                        Description
+                                                               Bit[7]:     AEC algorithm selection
+                                                                           0: Average-based AEC algorithm
+        AA         HAECC7           14        RW
+                                                                           1: Histogram-based AEC algorithm
+                                                               Bit[6:0]:   Reserved
+        AB        BD60MAX           0F        RW       60Hz Banding Step Limit
+                                                       Register AC
+                                                               Bit[7]:     Strobe enable
+                                                               Bit[6]:     R / G / B gain controlled by STR_R (0xAD) / STR_G
+                                                                           (0xAE) / STR_B (0xAF) for LED output frame
+                                                               Bit[5:4]:   Xenon mode option
+                                                                           00: 1 row
+                                                                           01: 2 rows
+        AC        STR-OPT           00        RW
+                                                                           10: 3 rows
+                                                                           11: 4 rows
+                                                               Bit[3:2]:   Reserved
+                                                               Bit[1:0]:   Mode select
+                                                                           00: Xenon
+                                                                           01: LED 1
+                                                                           1x: LED 2
+        AD          STR_R           80        RW       R Gain for LED Output Frame
+        AE          STR_G           80        RW       G Gain for LED Output Frame
+        AF          STR_B           80        RW       B Gain for LED Output Frame
+        B0          RSVD            XX          –      Reserved
+                                                               Bit[7:3]:   Reserved
+                                                               Bit[2]:     ABLC enable
+        B1          ABLC1           00        RW                           0: Disable ABLC function
+                                                                           1: Enable ABLC function
+                                                               Bit[1:0]:   Reserved
+        B2          RSVD            XX          –      Reserved
+        B3         THL_ST           80        RW       ABLC Target
+        B4          RSVD            XX          –      Reserved
+        B5        THL_DLT           04        RW       ABLC Stable Range
+       B6-BD        RSVD            XX          –      Reserved
+                                                        Blue Channel Black Level Compensation
+                                                               Bit[7]:     Reserved
+        BE         AD-CHB           00        RW
+                                                               Bit[6]:     Sign bit
+                                                               Bit[5:0]:   Blue channel black level compensation
+                                                        Red Channel Black Level Compensation
+                                                               Bit[7]:     Reserved
+        BF         AD-CHR           00        RW
+                                                               Bit[6]:     Sign bit
+                                                               Bit[5:0]:   Red channel black level compensation
+
+
+
+
+25              Proprietary to OmniVision Technologies, Inc.                                           Version 1.4, August 21, 2006
+Omni    ision                                                                                                   Register Set
+
+
+   Table 5        Device Control Register List (Continued)
+
+     Address      Register     Default
+      (Hex)        Name         (Hex)      R/W                                     Description
+                                                     Gb Channel Black Level Compensation
+                                                        Bit[7]:     Reserved
+        C0       AD-CHGb          00        RW
+                                                        Bit[6]:     Sign bit
+                                                        Bit[5:0]:   Gb channel black level compensation
+                                                     Gr Channel Black Level Compensation
+                                                        Bit[7]:     Reserved
+        C1       AD-CHGr          00        RW
+                                                        Bit[6]:     Sign bit
+                                                        Bit[5:0]:   Gr channel black level compensation
+       C2-C8       RSVD          XX          –      Reserved
+                                                    Saturation Control
+        C9        SATCTR         C0         RW          Bit[7:4]:   UV saturation control min
+                                                        Bit[3:0]:   UV saturation control result
+    NOTE: All other registers are factory-reserved. Please contact OmniVision Technologies for reference register settings.
+
+
+
+
+Version 1.4, August 21, 2006                                  Proprietary to OmniVision Technologies, Inc.                26
+OV7670/OV7171                    CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                                               Omni     ision
+
+
+Package Specifications
+     The OV7670/OV7171 uses a 24-ball Chip Scale Package 2 (CSP2). Refer to Figure 14 for package information, Table 6 for
+     package dimensions and Figure 15 for the array center on the chip.
+
+                                  Note: For OVT devices that are lead-free, all part marking letters are
+                                  lower case. Underlining the last digit of the lot number indicates CSP2 is
+                                  used.
+
+
+Figure 14 OV7670/OV7171 Package Specifications
+
+                                                   A
+                                                                                              S1                 J1
+                                      1    2      3        4   5                      S2               5     4        3        2   1
+
+
+                             A                                                                 A
+
+
+                             B                                                                 B
+                                                                                       J2
+                        B    C                                                                 C
+                                                                                                      wxyz
+                             D                                                                 D      abcd
+                             E                                                                 E
+
+
+                             F                                                                 F
+
+                                                                      Center of BGA (Die) =
+                                      Top View (Bumps Down)           Center of the package
+                                                                                                        Bottom View (Bumps Up)
+
+
+                                                  Glass                                            Part Marking Code:
+                                                               Die                                 w      - OVT Product Version
+                                                                                                   x      - Year the part is assembled
+                                                                          C3                       y      - Month the part is assembled
+                        C2                                                       C
+                                                                                                   z      - Wafer number
+                                                                                                   abcd - Last four digits of lot number
+                                                                          C4
+                                               Side View                                                                               7670CSP_DS_014
+                                 C1
+
+
+
+     Table 6         OV7670/OV7171 Package Dimensions
+
+                   Parameter                                   Symbol                Minimum                      Nominal                  Maximum          Unit
+ Package Body Dimension X                                            A                  3760                          3785                      3810        µm
+ Package Body Dimension Y                                            B                  4210                          4235                      4260        µm
+ Package Height                                                      C                     825                            885                    945        µm
+ Ball Height                                                         C1                    130                            160                    190        µm
+ Package Body Thickness                                              C2                     680                           725                    770        µm
+ Cover Glass Thickness                                               C3                     375                           400                    425        µm
+ Airgap Between Cover Glass and Sensor                               C4                     30                            45                      60        µm
+ Ball Diameter                                                       D                     270                            300                    330        µm
+ Total Pin Count                                                     N                                                    24
+ Pin Count X-axis                                                    N1                                                    5
+ Pin Count Y-axis                                                    N2                                                    6
+ Pins Pitch X-axis                                                   J1                                                   620                               µm
+ Pins Pitch Y-axis                                                   J2                                                   620                               µm
+ Edge-to-Pin Center Distance Analog X                                S1                    623                            653                    683        µm
+ Edge-to-Pin Center Distance Analog Y                                S2                    538                            568                    598        µm
+
+27               Proprietary to OmniVision Technologies, Inc.                                                                            Version 1.4, August 21, 2006
+OV7670/OV7171            CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                                                   Omni   ision
+
+
+Sensor Array Center
+
+Figure 15 OV7670/OV7171 Sensor Array Center
+
+
+
+
+                                                  A1      A2       A3       A4      A5         F irs t P ixel R eadout
+                                                                                               (1382.6 μm, 1364.78 μm)
+          P ac kage C enter                                       2361.6 μm
+                       (0,0)
+
+                                                                         1756.8 μm
+
+                                                       S ens or
+                                                       A rray
+
+
+
+
+                                                                                               A rray C enter
+                                                                                               (201.8 μm, 486.38 μm)
+                                                                        OV 7670/OV 7171
+
+
+                                                               TOP V IE W
+
+
+           NOT E S : 1. T his drawing is not to s cale and is for reference only.
+
+                     2. As mos t optical as s emblies invert and mirror the image, the chip is typically mounted
+                        with pins A1 to A5 oriented down on the P C B .
+                                                                                                                   7670CSP_DS_015
+
+
+
+
+28          Proprietary to OmniVision Technologies, Inc.                                                     Version 1.4, August 21, 2006
+Omni                         ision                                                                                                                                                                      Package Specifications
+
+
+IR Reflow Ramp Rate Requirements
+
+                     OV7670/OV7171 Lead-Free Packaged Devices
+
+                                                                 Note: For OVT devices that are lead-free, all part marking letters are
+                                                                 lower case
+
+Figure 16 IR Reflow Ramp Rate Requirements
+
+                     300.0
+                                             Z1                  Z2                    Z3                 Z4                     Z5                      Z6                   Z7                      end
+                     280.0
+
+                     260.0
+
+                     240.0
+
+                     220.0
+
+                     200.0
+
+                     180.0
+
+
+
+
+ Temperature ( C )
+                     160.0
+
+                     140.0
+
+                     120.0
+
+                     100.0
+
+                      80.0
+
+                      60.0
+
+                      40.0
+
+                      20.0
+                                             0.0                 0.6                   1.1                1.6                    2.2                     2.8                  3.3               3.9
+                       0.0
+                             -22        -2          18     38          58         78         98     118          138     158           178         198         218    238         258     278         298         318     338      358 369
+                                                                                                                               Time (sec)
+
+                             -0.3    -0.1     0.1    0.3   0.5    0.7       0.9    1.1       1.3   1.5     1.7     1.9   2.1      2.3        2.5     2.7       2.9   3.1    3.3     3.5   3.7     3.9       4.1     4.3   4.5    4.7      4.9
+                                                                                                                           Time (min.)                                                                                          7670CSP_DS_016
+
+
+
+
+                     Table 7                       Reflow Conditions
+
+                                                         Condition                                                                                                    Exposure
+
+                      Average Ramp-up Rate (30°C to 217°C)                                                       Less than 3°C per second
+
+                      > 100°C                                                                                    Between 330 - 600 seconds
+
+                      > 150°C                                                                                    At least 210 seconds
+
+                      > 217°C                                                                                    At least 30 seconds (30 ~ 120 seconds)
+
+                      Peak Temperature                                                                           245°C
+
+                      Cool-down Rate (Peak to 50°C)                                                              Less than 6°C per second
+
+                      Time from 30°C to 245°C                                                                    No greater than 390 seconds
+
+
+
+
+Version 1.4, August 21, 2006                                                                                                   Proprietary to OmniVision Technologies, Inc.                                                                29
+OV7670/OV7171             CMOS VGA (OmniPixel®) CAMERACHIP™ Sensor                                   Omni    ision
+
+
+     Note:
+
+     •   All information shown herein is current as of the revision and publication date. Please refer
+         to the OmniVision web site (http://www.ovt.com) to obtain the current versions of all
+         documentation.
+
+
+     •   OmniVision Technologies, Inc. reserves the right to make changes to their products or to
+         discontinue any product or service without further notice (It is advisable to obtain current product
+         documentation prior to placing orders).
+
+
+     •   Reproduction of information in OmniVision product documentation and specifications is
+         permissible only if reproduction is without alteration and is accompanied by all associated
+         warranties, conditions, limitations and notices. In such cases, OmniVision is not responsible
+         or liable for any information reproduced.
+
+
+     •   This document is provided with no warranties whatsoever, including any warranty of
+         merchantability, non-infringement, fitness for any particular purpose, or any warranty
+         otherwise arising out of any proposal, specification or sample. Furthermore, OmniVision
+         Technologies, Inc. disclaims all liability, including liability for infringement of any proprietary
+         rights, relating to use of information in this document. No license, expressed or implied, by
+         estoppels or otherwise, to any intellectual property rights is granted herein.
+
+
+     •   ’OmniPixel’, ’VarioPixel, ’OmniVision’, and the OmniVision logo are registered trademarks of
+         OmniVision Technologies, Inc. ’CameraChip’ is a trademark of OmniVision Technologies, Inc. All
+         other trade, product or service names referenced in this release may be trademarks or registered
+         trademarks of their respective holders. Third-party brands, names, and trademarks are the
+         property of their respective owners.
+
+
+
+
+     For further information, please feel free to contact OmniVision at info@ovt.com.
+
+
+
+
+     OmniVision Technologies, Inc.
+     1341 Orleans Drive
+     Sunnyvale, CA USA
+     (408) 542-3000
+
+
+
+30             Proprietary to OmniVision Technologies, Inc.                           Version 1.4, August 21, 2006
+Omni                ision          TM
+
+
+
+
+                        REVISION CHANGE LIST
+
+Document Title: OV7670 Datasheet          Version: 1.0
+
+                      DESCRIPTION OF CHANGES
+Initial Release
+Omni                    ision        TM
+
+
+
+
+                           REVISION CHANGE LIST
+
+Document Title: OV7670 Datasheet                           Version: 1.01
+
+                         DESCRIPTION OF CHANGES
+The following changes were made to version 1.0:
+   • Under LED and Strobe Flash Control Output section on page 3, changed text from “Refer
+       to the OmniVision Technologies LED Strobe Support document” to “The OV7670 has a
+       Strobe mode that allows it to work with an external flash and LED”
+Omni                     ision         TM
+
+
+
+
+                             REVISION CHANGE LIST
+Document Title:        OV7670/OV7171 Datasheet                       Version: 1.1
+
+                          DESCRIPTION OF CHANGES
+The following changes were made to version 1.01:
+   •   Under Features on page 1, changed bulleted item from “Supports VGA, CIF, and ...
+       RGB565/555), ...” to “Supports VGA, CIF, and ... RGB565/555/444), ...”
+   •   Under Key Specifications on page 1, added table footnote for I/O Power Supply that reads
+       “I/O power should be 2.45V or higher when using the internal regulator for Core (1.8V);
+       otherwise, it is necessary to provide an external 1.8V for the Core power supply.”
+   •   Under Key Specifications on page 1, added “RGB444” to Output Formats (8-bit)
+   •   Under Key Specifications on page 1, changed Chief Ray Angle from “TBD” to “25°”
+   •   Under Key Specifications on page 1, changed Sensitivity from “1.1 V/Lux-sec” to
+       “1.3 V/Lux-sec”
+   •   Under Key Specifications on page 1, changed S/N Ratio from “40 dB” to “46 dB”
+   •   Under Key Specifications on page 1, changed Dynamic Range from “TBD” to “52 dB”
+   •   In Figure 13 on page 24, changed callout C3 to measure from thickness of glass and added
+       callout C4 to measure airgap from glass to die.
+   •   In Table 6 on page 24, changed C3 parameter name from “Thickness of Glass Surface to
+       Wafer” to “Cover Glass Thickness”
+   •   In Table 6 on page 24, changed C3 Minimum, Nominal, and Maximum specifications
+       from “425, 445, and 465” to “375, 400, and 425”
+   •   In Table 6 on page 24, added C4 parameter, Airgap Between Cover Glass and Sensor, and
+       Minimum, Nominal, and Maximum specifications “30, 45, and 60”, respectively
+   •   In Table 5 on page 21, changed address of register GAM1 from 7A to 7B
+   •   In Table 5 on page 22, changed address of register GAM2 from 7B to 7C
+   •   In Table 5 on page 22, changed address of register GAM3 from 7C to 7D
+   •   In Table 5 on page 22, changed address of register GAM4 from 7D to 7E
+   •   In Table 5 on page 22, changed address of register GAM5 from 7E to 7F
+   •   In Table 5 on page 22, changed address of register GAM6 from 7F to 80
+   •   In Table 5 on page 22, changed address of register GAM7 from 80 to 81
+   •   In Table 5 on page 22, changed address of register GAM8 from 89 to 82
+   •   In Table 5 on page 22, changed address of register GAM9 from 89 to 83
+   •   In Table 5 on page 22, changed address of register GAM10 from 89 to 84
+   •   In Table 5 on page 22, changed address of register GAM11 from 89 to 85
+   •   In Table 5 on page 21, add register SLOP (0x7A)
+Omni                  ision        TM
+
+
+
+
+             DESCRIPTION OF CHANGES (CONTINUED)
+ •   In Figure 1 on page 1, changed name for pin F2 from “RESET” to “RESET#”
+ •   In Figure 2 on page 2, changed callout “RESET” to “RESET#”
+ •   In Table 1 on page 4, changed callout name for pin F2 from “RESET” to “RESET#”
+ •   In Table 1 on page 4, changed pin description for pin F2 from
+     “0: Normal mode; 1: Reset mode” to “0: Reset mode; 1: Normal mode”
+ •   In Table 1 on page 4, changed pin type for pin F2 from “Input (0)” to “Input”
+Omni                    ision         TM
+
+
+
+
+                            REVISION CHANGE LIST
+Document Title: OV7670 Datasheet                            Version: 1.2
+
+                         DESCRIPTION OF CHANGES
+The following changes were made to version 1.1:
+   • On page 10, added Figure 13, RGB 444 Output Timing Diagram
+   • In Table 5 on page 12, changed default value for register VER (0x0B) from “70” to “73”
+   • In Table 5 on page 18, changed description of register bits COM15[5:4] (0x40) by adding
+       “, effective only when RGB444[1] is low” to 01 and 11 descriptions
+   • In Table 5 on page 21, changed description for register bits DBLV[7:6] (0x6B) from:
+           10: Input clock x8
+           11: Input clock x16
+       to
+           10: Input clock x6
+           11: Input clock x8
+   • In Table 5 on page 21, changed description for register bits DBLV[3:0] (0x6B) to
+       “Reserved”
+   • In Table 5 on page 23, changed address for reserved registers from “8A-91” to “8A-8B”
+   • In Table 5 on page 23, added row for register RGB444 (0x8C)
+   • In Table 5 on page 23, added row for reserved registers 8D-91
+Omni                       ision          TM
+
+
+
+
+                               REVISION CHANGE LIST
+Document Title: OV7670 Datasheet                                     Version: 1.3
+
+                             DESCRIPTION OF CHANGES
+The following changes were made to version 1.2:
+   • In Table 5 on page 11, changed default value of register VREF (0x03) from “03” to “00”
+   • In Table 5 on page 12, changed default value for register COM4 (0x0D) from “40” to “00”
+   • In Table 5 on page 12, changed description of register bit COM6[6:5] (0x0F) to
+       “Reserved”
+   • In Table 5 on page 12, changed description of register bit COM6[1] (0x0F) to include:
+              0: No reset
+              1: Resets timing
+   •   In Table 5 on page 13, changed description for register bit CLKRC[7] (0x11) to
+       “Reserved”
+   •   In Table 5 on page 15, changed default value for register MVFP (0x1E) from “00” to “01”
+   •   In Table 5 on page 15, changed default value for register ADCCTR3 (0x23) from “80” to
+       “00”
+   •   In Table 5 on page 16, changed default value for register ARBLM (0x34) from “03” to
+       “11”
+   •   In Table 5 on page 16, changed default value for register ADC (0x37) from “04” to “3F”
+   •   In Table 5 on page 16, changed default value for register ACOM (0x38) from “12” to “01”
+   •   In Table 5 on page 17, changed default value for register TSLB (0x3A) from “0C” to “0D”
+   •   In Table 5 on page 17, changed description of register bit TSLB[0] from “Reserved” to:
+              Bit[0]:   Auto output window
+                        0:    Sensor DOES NOT automatically set window after resolution change. The
+                              companion backend processor can adjust the output window immediately
+                              after changing the resolution
+                        1:    Sensor automatically sets output window when resolution changes. After
+                              resolution changes, the companion backend processor must adjust the out-
+                              put window after the next VSYNC pulse.
+   •   In Table 5 on page 18, changed default value for register COM12 (0x3C) from “40” to
+       “68”
+   •   In Table 5 on page 18, changed default value for register COM13 (0x3D) from “99” to
+       “88”
+   •   In Table 5 on page 18, changed description of register bit COM13[0] (0x3D) from
+       “Reserved” to:
+              Bit[0]:   UV swap (use with register TSLB[3] (0x3A))
+                        TSLB[3], COM13[1]:
+                        00: Y U Y V
+                        01: Y V Y U
+                        10: U Y V Y
+                        11: V Y U Y
+Omni                      ision          TM
+
+
+
+
+                DESCRIPTION OF CHANGES (CONTINUED)
+ •   In Table 5 on page 18, changed description of register bit COM13[1] (0x3D) to
+     “Reserved”
+ •   In Table 5 on page 18, changed default value for register COM14 (0x3E) from “0E” to
+     “00”
+ •   In Table 5 on page 18, changed default value for register EDGE (0x3F) from “88” to “00”
+ •   In Table 5 on page 19, changed default value for register COM16 (0x41) from “10” to
+     “08”
+ •   In Table 5 on page 19, changed default value for register COM17 (0x42) from “08” to
+     “00”
+ •   In Table 5 on page 19, changed description for register DNSTH (0x4C) from “De-noise
+     Threshold” to “De-noise Strength”
+ •   In Table 5 on page 20, changed description for register LCC1 (0x62) from “Lens
+     Correction Option 1” to “Lens Correction Option 1 - X Coordinate of Lens Correction
+     Center Relative to Array Center“
+ •   In Table 5 on page 20, changed description for register LCC2 (0x63) from “Lens
+     Correction Option 2” to “Lens Correction Option 2 - Y Coordinate of Lens Correction
+     Center Relative to Array Center“
+ •   In Table 5 on page 20, changed description for register LCC3 (0x64) from “Lens
+     Correction Option 3” to:
+              Lens Correction Option 3
+              G Channel Compensation Coefficient when LCC5[2] (0x66) is 1
+              R, G, and B Channel Compensation Coefficient when LCC5[2] (0x66) is 0
+ •   In Table 5 on page 20, changed default value for register LCC3 (0x64) from “10” to “50”
+ •   In Table 5 on page 20, changed default value for register LCC4 (0x65) from “80” to “30”
+ •   In Table 5 on page 20, changed description for register LCC4 (0x65) from “Lens
+     Correction Option 4” to “Lens Correction Option 4 - Radius of the circular section where
+     no compensation applies“
+ •   In Table 5 on page 20, changed description for register LCC5 (0x66) from:
+       Lens Correction Control
+            Bit[7:3]: Reserved
+            Bit[2]:    Lens correction control select
+            Bit[1]:    Reserved
+            Bit[0]:    Lens correction enable
+     to:
+           Lens Correction Control
+              Bit[7:3]: Reserved
+              Bit[2]:    Lens correction control select
+                         0: R, G, and B channel compensation coefficient is set by register LCC3
+                         1: R, G, and B channel compensation coefficient is set by registers LCC6,
+                            LCC3, and LCC7, respectively
+              Bit[1]:    Reserved
+              Bit[0]:    Lens correction enable
+                         0: Disable
+                         1: Enable
+Omni                     ision           TM
+
+
+
+
+              DESCRIPTION OF CHANGES (CONTINUED)
+ •   In Table 5 on page 21, changed default value for register DBLV (0x6B) from “3A” to
+     “0A”
+ •   In Table 5 on page 21, changed default value for register AWBCTR1 (0x6E) from “00” to
+     “C0”
+ •   In Table 5 on page 21, changed default value for register SCALING_XSC (0x70) from
+     “4A” to “3A”
+ •   In Table 5 on page 22, changed description for register SCALING_DCWCTR (0x72)
+     from:
+       DCW Control
+           Bit[7:0]:    DCW control parameter
+     to:
+       DCW Control
+           Bit[7]:      Vertical average calculation option
+                        0: Vertical truncation
+                        1: Vertical rounding
+            Bit[6]:     Vertical down sampling option
+                        0: Vertical truncation
+                        1: Vertical rounding
+            Bit[5:4]:   Vertical down sampling rate
+                        00: No vertical down sampling
+                        01: Vertical down sample by 2
+                        10: Vertical down sample by 4
+                        11: Vertical down sample by 8
+            Bit[3]:     Horizontal average calculation option
+                        0: Horizontal truncation
+                        1: Horizontal rounding
+            Bit[2]:     Horizontal down sampling option
+                        0: Horizontal truncation
+                        1: Horizontal rounding
+            Bit[1:0]:   Horizontal down sampling rate
+                        00: No horizontal down sampling
+                        01: Horizontal down sample by 2
+                        10: Horizontal down sample by 4
+                        11: Horizontal down sample by 8
+Omni                       ision           TM
+
+
+
+
+             DESCRIPTION OF CHANGES (CONTINUED)
+ •   In Table 5 on page 22, changed description for register SCALING_PCLK_DIV (0x73)
+     from:
+            Bit[7:4]:     Reserved
+            Bit[3:0]:     Clock divider control for DSP scale control (valid only when COM14[3] = 1).
+                          Should change with COM14[2:0].
+                          0000: Divided by 1
+                          0001: Divided by 2
+                          0010: Divided by 4
+                          0011: Divided by 8
+                          0100: Divided by 16
+                          0101~1111: Not allowed
+     to:
+            Bit[7:4]:     Reserved
+            Bit[3]:       Bypass clock divider for DSP scale control
+                          0: Enable clock divider
+                          1: Bypass clock divider
+            Bit[2:0]:     Clock divider control for DSP scale control (valid only when COM14[3] = 1).
+                          Should change with COM14[2:0].
+                          000:    Divided by 1
+                          001:    Divided by 2
+                          010:    Divided by 4
+                          011:    Divided by 8
+                          100:    Divided by 16
+                          101~111: Not allowed
+ •   In Table 5 on page 23, changed description of register bit REG76[7] from “Reserved” to:
+            Bit[7]:     Black pixel correction enable
+                        0:    Disable
+                        1:    Enable
+ •   In Table 5 on page 23, changed description of register bit REG76[5] to “Reserved”
+ •   In Table 5 on page 23, changed description of register REG77 from “Offset, de-noise
+     range control” to “De-noise offset”
+ •   In Table 5 on page 23, changed default value for register SLOP (0x7A) from “18” to “24”
+ •   In Table 5 on page 23, changed default value for register GAM1 (0x7B) from “02” to “04”
+ •   In Table 5 on page 23, changed default value for register GAM3 (0x7D) from “1F” to “10”
+ •   In Table 5 on page 23, changed default value for register GAM4 (0x7E) from “49” to “28”
+ •   In Table 5 on page 23, changed default value for register GAM5 (0x7F) from “5A” to “36”
+ •   In Table 5 on page 23, changed default value for register GAM6 (0x80) from “6A” to “44”
+ •   In Table 5 on page 23, changed default value for register GAM7 (0x81) from “79” to “52”
+ •   In Table 5 on page 23, changed default value for register GAM8 (0x82) from “87” to “60”
+ •   In Table 5 on page 23, changed default value for register GAM9 (0x83) from “94” to “6C”
+ •   In Table 5 on page 23, changed default value for register GAM10 (0x84) from “9F” to
+     “78”
+Omni                   ision           TM
+
+
+
+
+             DESCRIPTION OF CHANGES (CONTINUED)
+ •   In Table 5 on page 23, changed default value for register GAM11 (0x85) from “AF” to
+     “8C”
+ •   In Table 5 on page 23, changed default value for register GAM12 (0x86) from “BB” to
+     “9E”
+ •   In Table 5 on page 23, changed default value for register GAM13 (0x87) from “CF” to
+     “BB”
+ •   In Table 5 on page 23, changed default value for register GAM14 (0x88) from “EE” to
+     “D2”
+ •   In Table 5 on page 24, changed default value for register GAM15 (0x89) from “EE” to
+     “E5”
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0x9F from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “HAECC1”, “C0”, “RW”,
+     and “Histogram-based AEC/AGC Control 1”, respectively
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA0 from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “HAECC2”, “90”, “RW”,
+     and “Histogram-based AEC/AGC Control 2”, respectively
+ •   In Table 5 on page 24, changed name and description of register 0xA1 from “ “ and
+     “Histogram-based AEC/AGC Control” to “RSVD” and “Reserved”, respectively
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA2 to:
+      SCALING_PCLK_DELAY          02        RW   Pixel Clock Delay
+                                                     Bit[7]:   Reserved
+                                                     Bit[6:0]: Scaling output delay
+ •   In Table 5 on page 24, changed name and description of register 0xA3 from “ “ and
+     “Histogram-based AEC/AGC Control” to “RSVD” and “Reserved”, respectively
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA4 to:
+      NT_CTRL                     00        RW      Bit[7:4]:   Reserved
+                                                    Bit[3]:     Auto frame rate adjustment control
+                                                                0:    Double exposure time
+                                                                1:    Reduce frame rate by half
+                                                    Bit[2]:     Reserved
+                                                    Bit[1:0]:   Auto frame rate adjustment switch
+                                                                point
+                                                                00: Insert dummy row at 2x gain
+                                                                01: Insert dummy row at 4x gain
+                                                                10: Insert dummy row at 8x gain
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA5 from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “BD50MAX”, “0F”, “RW”,
+     and “50Hz Banding Step Limit”, respectively
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA6 from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “HAECC3”, “F0”, “RW”,
+     and “Histogram-based AEC/AGC Control 3”, respectively
+Omni                       ision             TM
+
+
+
+
+               DESCRIPTION OF CHANGES (CONTINUED)
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA7 from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “HAECC4”, “C1”, “RW”,
+     and “Histogram-based AEC/AGC Control 4”, respectively
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA8 from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “HAECC5”, “F0”, “RW”,
+     and “Histogram-based AEC/AGC Control 5”, respectively
+ •   In Table 5 on page 24, changed name, default, R/W and description of register 0xA9 from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “HAECC6”, “C1”, “RW”,
+     and “Histogram-based AEC/AGC Control 6”, respectively
+ •   In Table 5 on page 25, changed name, default, R/W and description of register 0xAA to:
+       HAECC7              14    RW               Bit[7]:     AEC algorithm selection
+                                                              0: Average-based AEC algorithm
+                                                              1: Histogram-based AEC algorithm
+                                                  Bit[6:0]:   Reserved
+ •   In Table 5 on page 25, changed name, default, R/W and description of register 0xAB from
+     “ “, “XX”, “–”, and “Histogram-based AEC/AGC Control” to “BD60MAX”, “0F”, “RW”,
+     and “60Hz Banding Step Limit”, respectively
+ •   In Table 5 on page 25, changed description of register bits STR-OPT[1:0] (0xAC) from:
+       Bit[1:0]:   Mode select
+                   00: Xenon
+                   01: LED 1&2
+                   1x: LED 3
+     to:
+       Bit[1:0]:   Mode select
+                   00: Xenon
+                   01: LED 1
+                   1x: LED 2
+ •   In Table 5 on page 25, changed description for register THL_ST (0xB3) from “Digital
+     BLC Target” to “ABLC Target”
+ •   In Table 5 on page 25, changed default value for register THL_DLT (0xB5) from “??” to
+     “04”
+ •   In Table 5 on page 25, changed description for register THL_DLT (0xB5) from “Digital
+     BLC Stable Range” to “ABLC Stable Range”
+ •   In Table 5 on page 25, changed description for register AD-CHB (0xBE) from:
+              Bit[7]:     Reserved
+              Bit[6]:     Sign bit
+              Bit[5:0]:   ADC offset value
+     to:
+       Blue Channel Black Level Compensation
+             Bit[7]:   Reserved
+             Bit[6]:   Sign bit
+             Bit[5:0]: Blue channel black level compensation
+Omni                     ision             TM
+
+
+
+
+              DESCRIPTION OF CHANGES (CONTINUED)
+ •   In Table 5 on page 25, changed description for register AD-CHR (0xBF) from:
+            Bit[7]:     Reserved
+            Bit[6]:     Sign bit
+            Bit[5:0]:   ADC offset value
+     to:
+       Red Channel Black Level Compensation
+            Bit[7]:   Reserved
+            Bit[6]:   Sign bit
+            Bit[5:0]: Red channel black level compensation
+ •   In Table 5 on page 26, changed description for register AD-CHGb (0xC0) from:
+            Bit[7]:     Reserved
+            Bit[6]:     Sign bit
+            Bit[5:0]:   ADC offset value
+     to:
+       Gb Channel Black Level Compensation
+            Bit[7]:   Reserved
+            Bit[6]:   Sign bit
+            Bit[5:0]: Gb channel black level compensation
+ •   In Table 5 on page 26, changed description for register AD-CHGr (0xC1) from:
+            Bit[7]:     Reserved
+            Bit[6]:     Sign bit
+            Bit[5:0]:   ADC offset value
+     to:
+       Gr Channel Black Level Compensation
+            Bit[7]:   Reserved
+            Bit[6]:   Sign bit
+            Bit[5:0]: Gr channel black level compensation
+ •   In Table 2 on page 5, deleted row for ESD Rating, Human Body model specification
+Omni                    ision        TM
+
+
+
+
+                            REVISION CHANGE LIST
+Document Title: OV7670 Datasheet                            Version: 1.4
+
+
+                         DESCRIPTION OF CHANGES
+The following changes were made to version 1.3:
+   • In Table 5 on page 17, changed description of register TSLB[3] (0x3A) from:
+       “Output sequence (use with register COM13[1] (0x3D))
+       TSLB[3], COM13[1]):”
+       to:
+       “Output sequence (use with register COM13[0] (0x3D))
+       TSLB[3], COM13[0]:”
+   • In Table 5 on page 18, changed description of register COM13[0] (0x3D) from:
+       “UV swap (use with register TSLB[3] (0x3A))
+       TSLB[3], COM13[1]:”
+       to:
+       “UV swap (use with register TSLB[3] (0x3A))
+       TSLB[3], COM13[0]:”
+   • In Figure 15 on page 28, added callout for First Pixel Readout (1382.6 µm, 1364.78 µm)
+

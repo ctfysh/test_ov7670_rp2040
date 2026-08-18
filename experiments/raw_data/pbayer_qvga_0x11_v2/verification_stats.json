@@ -1,0 +1,44 @@
+{
+  "config": "PROCESSED_BAYER_QVGA + COM7=0x11 (fixed full-frame window)",
+  "fix": "VSTART=0x02 VSTOP=0x7A VREF=0x0A (rows 10..489=480) + set_bayer_window_320x240() gated off in QVGA mode",
+  "bug_before": "240-row window (VSTART=0x1E VSTOP=0x5A VREF=0x00, rows 120..359) + YSC 2:1 -> 120 unique rows duplicated (shift120_corr=0.9999)",
+  "after_fix": {
+    "shift120_corr": [
+      0.8048,
+      0.7032,
+      0.7031
+    ],
+    "unique_rows": [
+      240,
+      240,
+      240
+    ],
+    "even_row_shift2_corr": [
+      0.9925,
+      0.9896,
+      0.9896
+    ],
+    "colLag1_vs_colLag2_data_region": {
+      "colLag1": 126.433,
+      "colLag2": 80.139
+    },
+    "bayer_preserved": true,
+    "junk_header": "11 bytes (7 const + 4 zero), data cols 11..319"
+  },
+  "phase": {
+    "old_window_BGGR": {
+      "G_diff": 0.2,
+      "G>R>B": true
+    },
+    "new_fullframe_GRBG": {
+      "G_diff": 0.3,
+      "G>R>B": true,
+      "RGB_means": [
+        154.7,
+        172.7,
+        130.2
+      ]
+    },
+    "note": "VSTRT 120->10 changes vertical sampling grid parity (mod 4: 0->2) -> output phase flips BGGR->GRBG; both satisfy G>R>B matching verified 640 capture"
+  }
+}

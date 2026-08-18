@@ -1130,6 +1130,58 @@ Rscript bayer_pipeline.R bayer_verify/frame_000_640x480.raw -o bayer_verify/fina
 # 输出: region_replaced=430, dead_replaced=111 → 与 Python 版逐像素等价
 ```
 
+### 10.7 Processed Bayer QVGA 0x11 垂直重复修复 + 相位翻转（2026-08-18）
+
+**背景**：`PROCESSED_BAYER_QVGA`（COM7=0x11/0x15，datasheet Table 2-2 Sheet 3
+"30 fps QVGA Processed Bayer RGB mode"）构建产出的 320×240 帧**上下两半完全
+重复**（shift-120 corr = 0.9999，240 行仅 120 个唯一值）。
+
+**根因**（寄存器窗口 × 垂直缩放）：
+
+- `PROCESSED_BAYER_QVGA` 寄存器块设置 **YSC=0x35 垂直缩放 2:1**（DCWCTR=0x11
+  Bit[5:4]=00 无垂直下采样，YSC 才是垂直缩放因子）；
+- `main.cpp` 的 `RAW_BAYER` 路径无条件调用 `ov7670_set_bayer_window_320x240()`
+  ——该函数把垂直窗口设成 **VSTART=0x1E/VSTOP=0x5A/VREF=0x00 → 行 120..359 =
+  240 行窗口**；
+- 240 行窗口 ÷ YSC 2:1 = **仅 120 个唯一输出行**，帧生成器把 120 行重复成
+  240 行 → 上半 == 下半（shift-120 corr 0.9999）。
+
+**修复**：
+
+1. `src/ov7670.c` `PROCESSED_BAYER_QVGA` 块改用**全帧垂直窗口**：
+   VSTART=0x02 / VSTOP=0x7A / VREF=0x0A → 行 10..489 = **480 行**，
+   ÷ YSC 2:1 = 240 个唯一输出行（注释注明该块不得调用
+   `set_bayer_window_320x240()`）。
+2. `src/main.cpp` 把 `ov7670_set_bayer_window_320x240()` 用
+   `#ifndef PROCESSED_BAYER_QVGA` 门控——QVGA 缩放路径不再截窗。
+
+**验证**（`rpipico_pbayer_qvga_0x11` 固件烧录后 3 帧实采）：
+
+| 指标 | 修复前 | 修复后（3 帧） |
+|---|---|---|
+| shift120_corr | 0.9999 | 0.705 / 0.703 / 0.703（场景自然相关） |
+| unique_rows | 120 | **240 / 240 / 240** |
+| 隔行同通道 corr（行 i vs i+2） | — | 0.992 / 0.990 / 0.990（垂直平滑场景） |
+| 数据区 colLag1 / colLag2 | — | 126.4 / 80.1（Bayer 交替保留 ✓） |
+
+**相位翻转发现**（BGGR → GRBG，随垂直窗口起点变化）：
+
+| 配置 | VSTRT（行） | 数据区相位 | G 位置均值一致性 | G>R>B |
+|---|---|---|---|---|
+| 旧窗口（VSTART=0x1E, 行 120..359） | 120（mod 4 = 0） | **BGGR** | G diff 0.2 ✓ | ✓ |
+| 新全帧窗口（VSTART=0x02, 行 10..489） | 10（mod 4 = 2） | **GRBG** | G diff 0.3 ✓ | ✓ |
+
+- GRBG = BGGR 行交换 = 纯垂直 1 行翻转：垂直采样网格的奇偶性随 VSTRT
+  mod 4 变化（120→10 改变采样行相位），输出相位随之翻转。
+- **两种相位都满足 G>R>B**（与已验证 640 参考捕获一致），说明传感器
+  物理 CFA 固定（ig.txt "BG/GR Bayer Pattern"），相位翻转只是输出网格
+  行对齐问题——**去马赛克时必须用与窗口配置匹配的相位**。
+- 本构建（全帧窗口）正确相位 = **GRBG**；渲染 `frame_002_GRBG_309x240.png`
+  RGB 均值 [154.7, 172.7, 130.2]（G>R>B ✓，与 640 参考一致）。
+
+**实验数据**：`experiments/raw_data/pbayer_qvga_0x11_v2/`（raw + GRBG/BGGR
+渲染 + `verification_stats.json`）。
+
 ---
 
 ## 11. 附录

@@ -342,6 +342,55 @@ int ov7670_init(void) {
 // Raw Bayer (640x480 8-bit) + VGA half-window switching
 // ---------------------------------------------------------------------------
 
+#ifdef PROCESSED_BAYER_QVGA
+// Processed Bayer RAW QVGA experiment (datasheet Table 2-2 Sheet 3 +
+// community-corrected COM7). Table 2-1: Processed Bayer RGB = COM7[2]=1 +
+// COM7[0]=1, supports VGA AND QVGA; Raw Bayer (COM7[2]=0) is VGA-only.
+// Table 2-2 Sheet 3 "30 fps QVGA Processed Bayer RGB mode" lists:
+//   CLKRC=0x01, COM7=0x11(!), COM3=0x04, COM14=0x1A, XSC=0x3A, YSC=0x35,
+//   DCWCTR=0x11, PCLK_DIV=0xF9, PCLK_DELAY=0x02
+// The COM7=0x11 value (bit4 QVGA + bit0, bit2=0) CONTRADICTS Table 2-1
+// (bit2 must be 1 for Processed Bayer). Community code all uses bit2=1:
+// ArduCAM COM7_VALUE_VGA_PROCESSED_BAYER=0x05, Rust ov7670 crate
+// ProcessedBayerRaw=RAW_RGB|RGB_SELECTION, stevstrong COM7_PBAYER=0x05.
+// This build tests COM7=0x15 = QVGA(bit4)|RGB_SELECT(bit2)|RAW(bit0);
+// -DCOM7_LITERAL_0X11 switches to the Table 2-2 literal value.
+static const uint8_t OV7670_raw_bayer_regs[][2] = {
+    {0x11, 0x01}, // CLKRC: Table 2-2 Sheet 3 (24 MHz ref; fINT halved on 20.8 MHz PWM)
+    {0x6b, 0x0a}, // DBLV: PLL bypass (kept)
+#ifdef COM7_LITERAL_0X11
+    {0x12, 0x11}, // COM7: Table 2-2 literal (bit4 QVGA + bit0, bit2=0)
+#else
+    {0x12, 0x15}, // COM7: QVGA(bit4) + RGB_SELECT(bit2) + RAW(bit0) = Processed Bayer
+#endif
+    {0x13, 0xe2}, // COM8: AGC+AWB on, AEC OFF (bit5=0) - prevents AEC window jitter
+    {0x40, 0xc0}, // COM15: full 0-255 range (no RGB565 bit — fixes D7=D0 defect)
+    {0x1e, 0x07}, // MVFP: no mirror/vflip
+    {0x0c, 0x04}, // COM3: Table 2-2 Sheet 3 = 0x04 (DCW/zoom enable)
+    {0x3e, 0x1a}, // COM14: Table 2-2 = 0x1A (bit4 DCW+scaling PCLK en, bit3 manual
+                   // scaling, bit2:0=010 PCLK÷4)
+    {0x3a, 0x00}, // TSLB: kept (window math requirement)
+    {0x17, 0x11}, // HSTART (window; full-frame QVGA window, community standard)
+    {0x18, 0x61}, // HSTOP
+    {0x32, 0x80}, // HREF
+    {0x19, 0x02}, // VSTART: full-frame QVGA window (community standard 0x02/0x7A/0x0A)
+    {0x1a, 0x7a}, // VSTOP: rows 10..489 = 480 lines, /2 by YSC = 240 unique output
+    {0x03, 0x0a}, // VREF: VREF[1:0]=2 for VSTRT low bits, VREF[3:2]=2 for VSTOP
+                   // low bits -> VSTRT=10, VSTOP=490, exactly 480 rows.
+                   // CRITICAL: the vertical window MUST span the full 480 rows in
+                   // QVGA mode. A 240-row window + YSC vertical scale 2:1 yields
+                   // only 120 unique rows, which the frame generator duplicates
+                   // into 240 lines (top half == bottom half, shift-120 corr
+                   // 0.9999). set_bayer_window_320x240() must NOT be applied here.
+    {0x70, 0x3a}, // SCALING_XSC: Table 2-2 = 0x3A (QVGA h-scaling)
+    {0x71, 0x35}, // SCALING_YSC: Table 2-2 = 0x35 (QVGA v-scaling)
+    {0x72, 0x11}, // SCALING_DCWCTR: Table 2-2 = 0x11 (HDS×2 + VDS×2)
+    {0x73, 0xf9}, // SCALING_PCLK_DIV: Table 2-2 = 0xF9 (bit3=1 BYPASS clock divider)
+    {0x74, 0x20}, // REG74: 1x horizontal ratio (kept)
+    {0xa2, 0x02}, // SCALING_PCLK_DELAY: Table 2-2 = 0x02
+    {0xff, 0xff},
+};
+#else
 #ifdef RAW_BAYER_OFFICIAL_REGS
 // OFFICIAL datasheet Table 2-2 Sheet 3 register set (8th group B of the A/B
 // test): the exact "30 fps VGA Raw Bayer RGB mode" values from the datasheet
@@ -362,13 +411,15 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x11, 0x01}, // CLKRC: OFFICIAL 0x01 (Table 2-2; 24 MHz input reference)
     {0x6b, 0x0a}, // DBLV: PLL bypass (kept from shipped table)
     {0x12, 0x01}, // COM7: sensor raw 8-bit Bayer out
+    {0x13, 0xe2}, // COM8: AGC+AWB on, AEC OFF (bit5=0) - prevents AEC from
+                   // mutating VSTART/VSTOP/VREF window regs (line-count jitter)
     {0x40, 0xc0}, // COM15: full 0-255 range (no RGB565 bit — fixes D7=D0 defect)
     {0x1e, 0x07}, // MVFP: no mirror/vflip (matches shipped)
     {0x0c, 0x00}, // COM3: OFFICIAL 0x00 (= shipped)
 #ifdef RAW_BAYER_COM14_V2
-    {0x3e, 0x18}, // COM14: open PCLK_DIV gate (bit4+bit3=1). Without this,
-                   // PCLK_DIV=0xF0 is dead and DCWCTR HDS×2 has no effect.
-                   // Bit4 is the active ingredient (bit3 alone is a no-op).
+    {0x3e, 0x19}, // COM14: DCW enable (bit4) + manual scaling (bit3) + PCLK÷2 (bit2:0=001)
+                   // Open-source standard QVGA config. Bit3 ensures DCW state machine
+                   // aligns with window params (HSTART/VSTART).
 #else
     {0x3e, 0x00}, // COM14: OFFICIAL 0x00 (shipped: 0x18)
 #endif
@@ -377,12 +428,13 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0x18, 0x61}, // HSTOP
     {0x32, 0x80}, // HREF
     {0x19, 0x03}, // VSTART
-    {0x1a, 0x7b}, // VSTOP
+    {0x1a, 0x7b}, // VSTOP: 480-line window /2 = 240 output lines
     {0x03, 0x03}, // VREF
-    {0x70, 0x3a}, // SCALING_XSC: OFFICIAL 0x3A (shipped: 0x00 scaler bypass)
-    {0x71, 0x35}, // SCALING_YSC: OFFICIAL 0x35
-    {0x72, 0x11}, // SCALING_DCWCTR: OFFICIAL 0x11 (shipped: 0x00 no downsampling)
-    {0x73, 0xf0}, // SCALING_PCLK_DIV: OFFICIAL 0xF0 (shipped: 0x08 bypass)
+    {0x70, 0x3a}, // SCALING_XSC: QVGA horizontal scaling
+    {0x71, 0x35}, // SCALING_YSC: QVGA vertical scaling
+    {0x72, 0x11}, // SCALING_DCWCTR: 2x2 downsampling (HDS=01, VDS=01)
+    {0x73, 0xf1}, // SCALING_PCLK_DIV: enable division (bit3=0), ÷2 (bit2:0=001)
+                   // Must match COM14[2:0] for PCLK to actually divide.
     {0x74, 0x20}, // REG74: 1x horizontal ratio (kept; not in Table 2-2)
     {0xa2, 0x02}, // SCALING_PCLK_DELAY: OFFICIAL 0x02 (= shipped)
     {0xff, 0xff},
@@ -447,6 +499,7 @@ static const uint8_t OV7670_raw_bayer_regs[][2] = {
     {0xff, 0xff},
 };
 #endif // RAW_BAYER_OFFICIAL_REGS
+#endif // PROCESSED_BAYER_QVGA
 
 int ov7670_init_raw_bayer(void) {
   sccb_pins_init();

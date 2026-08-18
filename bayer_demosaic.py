@@ -23,6 +23,13 @@ import struct
 
 import numpy as np
 
+# DEFAULT_PATTERN is CONFIG-DEPENDENT, not a fixed sensor property.
+# Verified phases (see docs/RAW_BAYER_OPERATION_MATH.md §10.7):
+#   - 640/RAW_BAYER + VSTART=0x1E (rows 120..359 window)        -> BGGR
+#   - PROCESSED_BAYER_QVGA + VSTART=0x02 (rows 10..489 full)     -> GRBG
+# The vertical window start changes the sampling-grid row parity
+# (VSTRT mod 4), flipping output phase BGGR<->GRBG. Both satisfy
+# G>R>B matching the verified 640 reference capture.
 DEFAULT_PATTERN = "RGGB"  # spec §6.1: 偶行偶列=R, 偶行奇列=G, 奇行偶列=G, 奇行奇列=B
 
 
